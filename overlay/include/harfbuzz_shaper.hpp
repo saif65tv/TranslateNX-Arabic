@@ -3,8 +3,6 @@
 #include <switch.h>
 #include <string>
 #include <vector>
-#include <cstdio>
-#include <cstring>
 #include <harfbuzz/hb.h>
 #include <harfbuzz/hb-ot.h>
 
@@ -39,7 +37,8 @@ struct Context {
 
         hb_ot_font_set_funcs(font);
 
-        unsigned int upem = hb_face_get_upem(face);
+        const unsigned int upem = hb_face_get_upem(face);
+
         hb_font_set_scale(
             font,
             static_cast<int>(upem),
@@ -50,8 +49,10 @@ struct Context {
     ~Context() {
         if (font)
             hb_font_destroy(font);
+
         if (face)
             hb_face_destroy(face);
+
         if (blob)
             hb_blob_destroy(blob);
     }
@@ -79,7 +80,8 @@ inline bool containsArabic(const char* text) {
 
     while (*p) {
         u32 cp = 0;
-        ssize_t width = decode_utf8(&cp, p);
+
+        const ssize_t width = decode_utf8(&cp, p);
 
         if (width <= 0)
             break;
@@ -93,7 +95,10 @@ inline bool containsArabic(const char* text) {
     return false;
 }
 
-inline bool shape(const char* text, std::vector<Glyph>& output) {
+inline bool shape(
+    const char* text,
+    std::vector<Glyph>& output
+) {
     output.clear();
 
     if (!text || !containsArabic(text))
@@ -101,28 +106,57 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
 
     Context& ctx = getContext();
 
+    if (!ctx.font)
+        return false;
+
     hb_buffer_t* buffer = hb_buffer_create();
+
     if (!buffer)
         return false;
 
-    hb_buffer_set_direction(buffer, HB_DIRECTION_RTL);
-    hb_buffer_set_script(buffer, HB_SCRIPT_ARABIC);
+    hb_buffer_set_direction(
+        buffer,
+        HB_DIRECTION_RTL
+    );
+
+    hb_buffer_set_script(
+        buffer,
+        HB_SCRIPT_ARABIC
+    );
+
     hb_buffer_set_language(
         buffer,
         hb_language_from_string("ar", -1)
     );
 
-    hb_buffer_add_utf8(buffer, text, -1, 0, -1);
+    hb_buffer_add_utf8(
+        buffer,
+        text,
+        -1,
+        0,
+        -1
+    );
 
-    hb_shape(ctx.font, buffer, nullptr, 0);
+    hb_shape(
+        ctx.font,
+        buffer,
+        nullptr,
+        0
+    );
 
     unsigned int count = 0;
 
     hb_glyph_info_t* infos =
-        hb_buffer_get_glyph_infos(buffer, &count);
+        hb_buffer_get_glyph_infos(
+            buffer,
+            &count
+        );
 
     hb_glyph_position_t* positions =
-        hb_buffer_get_glyph_positions(buffer, nullptr);
+        hb_buffer_get_glyph_positions(
+            buffer,
+            nullptr
+        );
 
     if (!infos || !positions || count == 0) {
         hb_buffer_destroy(buffer);
@@ -131,8 +165,7 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
 
     output.reserve(count);
 
-    for (unsigned int i = 0; i < count; i++) {
-            for (unsigned int i = 0; i < count; i++) {
+    for (unsigned int i = 0; i < count; ++i) {
         output.push_back({
             infos[i].codepoint,
             positions[i].x_advance,
@@ -147,4 +180,4 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
     return true;
 }
 
-}
+} // namespace tsl::ArabicHarfBuzz
