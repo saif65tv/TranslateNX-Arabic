@@ -177,7 +177,7 @@ private:
         }
 
         std::vector<Token> tokens;
-        Token current_token = {u"", false};
+        Token current_token = {U"", false};
 
         for (char32_t c : reshaped) {
             bool c_arabic = isArabic(c);
