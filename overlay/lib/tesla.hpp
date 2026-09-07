@@ -828,6 +828,8 @@ namespace tsl {
      * ----------------------------------------------------------------------
      */
     if (hasArabic) {
+        return drawString("[ARABIC]", monospace, x, y, fontSize, color, maxWidth);
+
         std::vector<HBGlyph> glyphs;
 
         if (tsl::ArabicHarfBuzz::shape(string, glyphs) && !glyphs.empty()) {
