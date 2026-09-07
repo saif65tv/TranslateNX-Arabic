@@ -19,40 +19,40 @@ struct Forms {
 
 inline const Forms* getForms(u32 cp) {
     switch (cp) {
-        case 0x0622: { static const Forms f{0xFE81,0xFE82,0,0,true,false}; return &f; } // آ
-        case 0x0623: { static const Forms f{0xFE83,0xFE84,0,0,true,false}; return &f; } // أ
-        case 0x0624: { static const Forms f{0xFE85,0xFE86,0,0,true,false}; return &f; } // ؤ
-        case 0x0625: { static const Forms f{0xFE87,0xFE88,0,0,true,false}; return &f; } // إ
-        case 0x0627: { static const Forms f{0xFE8D,0xFE8E,0,0,true,false}; return &f; } // ا
-        case 0x0628: { static const Forms f{0xFE8F,0xFE90,0xFE91,0xFE92,true,true}; return &f; } // ب
-        case 0x0629: { static const Forms f{0xFE93,0xFE94,0,0,true,false}; return &f; } // ة
-        case 0x062A: { static const Forms f{0xFE95,0xFE96,0xFE97,0xFE98,true,true}; return &f; } // ت
-        case 0x062B: { static const Forms f{0xFE99,0xFE9A,0xFE9B,0xFE9C,true,true}; return &f; } // ث
-        case 0x062C: { static const Forms f{0xFE9D,0xFE9E,0xFE9F,0xFEA0,true,true}; return &f; } // ج
-        case 0x062D: { static const Forms f{0xFEA1,0xFEA2,0xFEA3,0xFEA4,true,true}; return &f; } // ح
-        case 0x062E: { static const Forms f{0xFEA5,0xFEA6,0xFEA7,0xFEA8,true,true}; return &f; } // خ
-        case 0x062F: { static const Forms f{0xFEA9,0xFEAA,0,0,true,false}; return &f; } // د
-        case 0x0630: { static const Forms f{0xFEAB,0xFEAC,0,0,true,false}; return &f; } // ذ
-        case 0x0631: { static const Forms f{0xFEAD,0xFEAE,0,0,true,false}; return &f; } // ر
-        case 0x0632: { static const Forms f{0xFEAF,0xFEB0,0,0,true,false}; return &f; } // ز
-        case 0x0633: { static const Forms f{0xFEB1,0xFEB2,0xFEB3,0xFEB4,true,true}; return &f; } // س
-        case 0x0634: { static const Forms f{0xFEB5,0xFEB6,0xFEB7,0xFEB8,true,true}; return &f; } // ش
-        case 0x0635: { static const Forms f{0xFEB9,0xFEBA,0xFEBB,0xFEBC,true,true}; return &f; } // ص
-        case 0x0636: { static const Forms f{0xFEBD,0xFEBE,0xFEBF,0xFEC0,true,true}; return &f; } // ض
-        case 0x0637: { static const Forms f{0xFEC1,0xFEC2,0xFEC3,0xFEC4,true,true}; return &f; } // ط
-        case 0x0638: { static const Forms f{0xFEC5,0xFEC6,0xFEC7,0xFEC8,true,true}; return &f; } // ظ
-        case 0x0639: { static const Forms f{0xFEC9,0xFECA,0xFECB,0xFECC,true,true}; return &f; } // ع
-        case 0x063A: { static const Forms f{0xFECD,0xFECE,0xFECF,0xFED0,true,true}; return &f; } // غ
-        case 0x0641: { static const Forms f{0xFED1,0xFED2,0xFED3,0xFED4,true,true}; return &f; } // ف
-        case 0x0642: { static const Forms f{0xFED5,0xFED6,0xFED7,0xFED8,true,true}; return &f; } // ق
-        case 0x0643: { static const Forms f{0xFED9,0xFEDA,0xFEDB,0xFEDC,true,true}; return &f; } // ك
-        case 0x0644: { static const Forms f{0xFEDD,0xFEDE,0xFEDF,0xFEE0,true,true}; return &f; } // ل
-        case 0x0645: { static const Forms f{0xFEE1,0xFEE2,0xFEE3,0xFEE4,true,true}; return &f; } // م
-        case 0x0646: { static const Forms f{0xFEE5,0xFEE6,0xFEE7,0xFEE8,true,true}; return &f; } // ن
-        case 0x0647: { static const Forms f{0xFEE9,0xFEEA,0xFEEB,0xFEEC,true,true}; return &f; } // ه
-        case 0x0648: { static const Forms f{0xFEED,0xFEEE,0,0,true,false}; return &f; } // و
-        case 0x0649: { static const Forms f{0xFEEF,0xFEF0,0,0,true,false}; return &f; } // ى
-        case 0x064A: { static const Forms f{0xFEF1,0xFEF2,0xFEF3,0xFEF4,true,true}; return &f; } // ي
+        case 0x0622: { static const Forms f{0x0622,0xFE82,0,0,true,false}; return &f; } // آ
+        case 0x0623: { static const Forms f{0x0623,0xFE84,0,0,true,false}; return &f; } // أ
+        case 0x0624: { static const Forms f{0x0624,0xFE86,0,0,true,false}; return &f; } // ؤ
+        case 0x0625: { static const Forms f{0x0625,0xFE88,0,0,true,false}; return &f; } // إ
+        case 0x0627: { static const Forms f{0x0627,0xFE8E,0,0,true,false}; return &f; } // ا
+        case 0x0628: { static const Forms f{0x0628,0xFE90,0xFE91,0xFE92,true,true}; return &f; } // ب
+        case 0x0629: { static const Forms f{0x0629,0xFE94,0,0,true,false}; return &f; } // ة
+        case 0x062A: { static const Forms f{0x062A,0xFE96,0xFE97,0xFE98,true,true}; return &f; } // ت
+        case 0x062B: { static const Forms f{0x062B,0xFE9A,0xFE9B,0xFE9C,true,true}; return &f; } // ث
+        case 0x062C: { static const Forms f{0x062C,0xFE9E,0xFE9F,0xFEA0,true,true}; return &f; } // ج
+        case 0x062D: { static const Forms f{0x062D,0xFEA2,0xFEA3,0xFEA4,true,true}; return &f; } // ح
+        case 0x062E: { static const Forms f{0x062E,0xFEA6,0xFEA7,0xFEA8,true,true}; return &f; } // خ
+        case 0x062F: { static const Forms f{0x062F,0xFEAA,0,0,true,false}; return &f; } // د
+        case 0x0630: { static const Forms f{0x0630,0xFEAC,0,0,true,false}; return &f; } // ذ
+        case 0x0631: { static const Forms f{0x0631,0xFEAE,0,0,true,false}; return &f; } // ر
+        case 0x0632: { static const Forms f{0x0632,0xFEB0,0,0,true,false}; return &f; } // ز
+        case 0x0633: { static const Forms f{0x0633,0xFEB2,0xFEB3,0xFEB4,true,true}; return &f; } // س
+        case 0x0634: { static const Forms f{0x0634,0xFEB6,0xFEB7,0xFEB8,true,true}; return &f; } // ش
+        case 0x0635: { static const Forms f{0x0635,0xFEBA,0xFEBB,0xFEBC,true,true}; return &f; } // ص
+        case 0x0636: { static const Forms f{0x0636,0xFEBE,0xFEBF,0xFEC0,true,true}; return &f; } // ض
+        case 0x0637: { static const Forms f{0x0637,0xFEC2,0xFEC3,0xFEC4,true,true}; return &f; } // ط
+        case 0x0638: { static const Forms f{0x0638,0xFEC6,0xFEC7,0xFEC8,true,true}; return &f; } // ظ
+        case 0x0639: { static const Forms f{0x0639,0xFECA,0xFECB,0xFECC,true,true}; return &f; } // ع
+        case 0x063A: { static const Forms f{0x063A,0xFECE,0xFECF,0xFED0,true,true}; return &f; } // غ
+        case 0x0641: { static const Forms f{0x0641,0xFED2,0xFED3,0xFED4,true,true}; return &f; } // ف
+        case 0x0642: { static const Forms f{0x0642,0xFED6,0xFED7,0xFED8,true,true}; return &f; } // ق
+        case 0x0643: { static const Forms f{0x0643,0xFEDA,0xFEDB,0xFEDC,true,true}; return &f; } // ك
+        case 0x0644: { static const Forms f{0x0644,0xFEDE,0xFEDF,0xFEE0,true,true}; return &f; } // ل
+        case 0x0645: { static const Forms f{0x0645,0xFEE2,0xFEE3,0xFEE4,true,true}; return &f; } // م
+        case 0x0646: { static const Forms f{0x0646,0xFEE6,0xFEE7,0xFEE8,true,true}; return &f; } // ن
+        case 0x0647: { static const Forms f{0x0647,0xFEEA,0xFEEB,0xFEEC,true,true}; return &f; } // ه
+        case 0x0648: { static const Forms f{0x0648,0xFEEE,0,0,true,false}; return &f; } // و
+        case 0x0649: { static const Forms f{0x0649,0xFEF0,0,0,true,false}; return &f; } // ى
+        case 0x064A: { static const Forms f{0x064A,0xFEF2,0xFEF3,0xFEF4,true,true}; return &f; } // ي
         default: return nullptr;
     }
 }
