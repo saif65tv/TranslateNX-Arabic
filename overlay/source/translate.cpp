@@ -1,3 +1,5 @@
+#include "arabic_helper.hpp"
+#include "arabic_helper.hpp"
 #include "translate.hpp"
 #include "http_client.hpp"
 #include <switch.h>
@@ -29,7 +31,7 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
     TranslateResult result;
     if (lines.empty()) {
         result.errorMsg = "Çeviri: OCR'dan metin gelmedi";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     std::string mergedText;
@@ -63,7 +65,7 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
         } else {
             result.errorMsg = "MyMemory: HTTP " + std::to_string(resp.statusCode);
         }
-        return result;
+        return ArabicHelper::process(result);
     }
 
     cJSON* root = cJSON_Parse(resp.body.c_str());
@@ -80,12 +82,12 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
 
     if (result.translatedText.empty()) {
         result.errorMsg = "MyMemory: Boş yanıt döndü — API sınırı aşıldı olabilir";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     if (result.translatedText.find("QUERY LENGTH") != std::string::npos) {
         result.errorMsg = "MyMemory: Metin çok uzun (500 karakter sınırı aşıldı)";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     // Split by \n \n 
@@ -101,7 +103,7 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
 
     // Eğer sayı uyuşmuyorsa, düz metin gibi kabul edeceğiz
     result.success = true;
-    return result;
+    return ArabicHelper::process(result);
 }
 
 TranslateResult runDeepL(const std::vector<std::string>& lines,
@@ -111,7 +113,7 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
     TranslateResult result;
     if (lines.empty() || apiKey.empty()) {
         result.errorMsg = "DeepL: API key girilmemiş";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     std::string body = "target_lang=" + targetLang;
@@ -160,7 +162,7 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
         } else {
             result.errorMsg = "DeepL: HTTP " + std::to_string(resp.statusCode);
         }
-        return result;
+        return ArabicHelper::process(result);
     }
 
     // DeepL JSON: {"translations":[{"detected_source_language":"EN","text":"Tr1"}, {"text":"Tr2"}]}
@@ -184,11 +186,11 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
 
     if (result.translatedLines.empty()) {
         result.errorMsg = "DeepL: Boş yanıt döndü — API key doğru mu?";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     result.success = true;
-    return result;
+    return ArabicHelper::process(result);
 }
 
 
@@ -197,11 +199,11 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
     TranslateResult result;
     if (apiKey.empty()) {
         result.errorMsg = "Google Cloud Translate: API key girilmemiş";
-        return result;
+        return ArabicHelper::process(result);
     }
     if (lines.empty()) {
         result.errorMsg = "Google Cloud Translate: Çevrilecek metin yok";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     std::string url = "https://translation.googleapis.com/language/translate/v2?key=" + apiKey;
@@ -247,14 +249,14 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
         } else {
             result.errorMsg = "Google Cloud Translate: HTTP " + std::to_string(resp.statusCode) + " — " + resp.errorStr;
         }
-        return result;
+        return ArabicHelper::process(result);
     }
 
     // Response: {"data": {"translations": [{"translatedText": "ceviri"}]}}
     cJSON* respObj = cJSON_Parse(resp.body.c_str());
     if (!respObj) {
         result.errorMsg = "Google Cloud Translate: Sunucu yanıtı işlenemedi (JSON parse hatası)";
-        return result;
+        return ArabicHelper::process(result);
     }
 
     cJSON* data = cJSON_GetObjectItem(respObj, "data");
@@ -285,7 +287,7 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
         result.success = true;
     }
 
-    return result;
+    return ArabicHelper::process(result);
 }
 
 } // namespace Translate
