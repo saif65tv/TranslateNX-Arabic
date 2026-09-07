@@ -3,32 +3,50 @@
 
 #include <string>
 #include <vector>
-#include <algorithm>
 #include <unordered_map>
+#include <algorithm>
 
 class ArabicHelper {
 private:
-    static bool isArabic(char32_t c) {
-        return (c >= 0x0600 && c <= 0x06FF) || (c >= 0x0750 && c <= 0x077F) || (c >= 0xFE70 && c <= 0xFEFF);
+    // تعريف الحروف التي تتصل من اليمين واليسار
+    static bool canConnectLeft(char32_t c) {
+        // الحروف التي تتصل من اليسار: ب ت ث ج ح خ س ش ص ض ط ظ ع غ ف ق ك ل م ن ي
+        static const std::vector<char32_t> connectors = {
+            0x0628, 0x062A, 0x062B, 0x062C, 0x062D, 0x062E, 0x0633, 0x0634, 
+            0x0635, 0x0636, 0x0637, 0x0638, 0x0639, 0x063A, 0x0641, 0x0642,
+            0x0643, 0x0644, 0x0645, 0x0646, 0x064A
+        };
+        return std::find(connectors.begin(), connectors.end(), c) != connectors.end();
     }
 
-    struct Glyphs {
-        char32_t isolated, initial, medial, final_form;
+    static bool canConnectRight(char32_t c) {
+        // الحروف التي تتصل من اليمين (معظم الحروف)
+        return isArabic(c) && c != 0x0627 && c != 0x0629 && c != 0x062F && 
+               c != 0x0630 && c != 0x0631 && c != 0x0632 && c != 0x0648;
+    }
+
+    static bool isArabic(char32_t c) {
+        return (c >= 0x0600 && c <= 0x06FF) || 
+               (c >= 0x0750 && c <= 0x077F) || 
+               (c >= 0xFE70 && c <= 0xFEFF);
+    }
+
+    // خريطة الأشكال المختلفة لكل حرف
+    struct GlyphForms {
+        char32_t isolated;
+        char32_t initial;
+        char32_t medial;
+        char32_t final_form;
     };
 
-    static const std::unordered_map<char32_t, Glyphs>& getArabicMap() {
-        static const std::unordered_map<char32_t, Glyphs> map = {
-            {0x0627, {0xFE8D, 0xFE8D, 0xFE8E, 0xFE8E}}, // أ
+    static const std::unordered_map<char32_t, GlyphForms>& getGlyphMap() {
+        static const std::unordered_map<char32_t, GlyphForms> map = {
             {0x0628, {0xFE8F, 0xFE91, 0xFE92, 0xFE90}}, // ب
             {0x062A, {0xFE93, 0xFE95, 0xFE96, 0xFE94}}, // ت
             {0x062B, {0xFE97, 0xFE99, 0xFE9A, 0xFE98}}, // ث
-            {0x062C, {0xFE99, 0xFE9D, 0xFE9E, 0xFE9C}}, // ج
+            {0x062C, {0xFE9B, 0xFE9D, 0xFE9E, 0xFE9C}}, // ج
             {0x062D, {0xFEA1, 0xFEA3, 0xFEA4, 0xFEA2}}, // ح
             {0x062E, {0xFEA5, 0xFEA7, 0xFEA8, 0xFEA6}}, // خ
-            {0x062F, {0xFEA9, 0xFEA9, 0xFEAA, 0xFEAA}}, // د
-            {0x0630, {0xFEAB, 0xFEAB, 0xFEAC, 0xFEAC}}, // ذ
-            {0x0631, {0xFEAD, 0xFEAD, 0xFEAE, 0xFEAE}}, // ر
-            {0x0632, {0xFEAF, 0xFEAF, 0xFEB0, 0xFEB0}}, // ز
             {0x0633, {0xFEB1, 0xFEB3, 0xFEB4, 0xFEB2}}, // س
             {0x0634, {0xFEB5, 0xFEB7, 0xFEB8, 0xFEB6}}, // ش
             {0x0635, {0xFEB9, 0xFEBB, 0xFEBC, 0xFEBA}}, // ص
@@ -44,7 +62,6 @@ private:
             {0x0645, {0xFEE1, 0xFEE3, 0xFEE4, 0xFEE2}}, // م
             {0x0646, {0xFEE5, 0xFEE7, 0xFEE8, 0xFEE6}}, // ن
             {0x0647, {0xFEE9, 0xFEEB, 0xFEEC, 0xFEEA}}, // هـ
-            {0x0648, {0xFEED, 0xFEED, 0xFEEE, 0xFEEE}}, // و
             {0x064A, {0xFEF1, 0xFEF3, 0xFEF4, 0xFEF2}}, // ي
             {0x0629, {0xFE93, 0xFE93, 0xFE94, 0xFE94}}, // ة
             {0x0649, {0xFEEF, 0xFEEF, 0xFEF0, 0xFEF0}}  // ى
@@ -52,34 +69,57 @@ private:
         return map;
     }
 
+    // تحويل UTF-8 إلى UTF-32
     static std::u32string utf8_to_utf32(const std::string& str) {
         std::u32string result;
         size_t i = 0;
         while (i < str.size()) {
             unsigned char c = str[i];
             char32_t u = 0;
-            if (c <= 0x7F) { u = c; i += 1; }
-            else if ((c & 0xE0) == 0xC0) { u = ((c & 0x1F) << 6) | (str[i+1] & 0x3F); i += 2; }
-            else if ((c & 0xF0) == 0xE0) { u = ((c & 0x0F) << 12) | ((str[i+1] & 0x3F) << 6) | (str[i+2] & 0x3F); i += 3; }
-            else if ((c & 0xF8) == 0xF0) { u = ((c & 0x07) << 18) | ((str[i+1] & 0x3F) << 12) | ((str[i+2] & 0x3F) << 6) | (str[i+3] & 0x3F); i += 4; }
-            else { i++; }
+            
+            if (c <= 0x7F) {
+                u = c;
+                i += 1;
+            }
+            else if ((c & 0xE0) == 0xC0 && i + 1 < str.size()) {
+                u = ((c & 0x1F) << 6) | (str[i+1] & 0x3F);
+                i += 2;
+            }
+            else if ((c & 0xF0) == 0xE0 && i + 2 < str.size()) {
+                u = ((c & 0x0F) << 12) | ((str[i+1] & 0x3F) << 6) | (str[i+2] & 0x3F);
+                i += 3;
+            }
+            else if ((c & 0xF8) == 0xF0 && i + 3 < str.size()) {
+                u = ((c & 0x07) << 18) | ((str[i+1] & 0x3F) << 12) | ((str[i+2] & 0x3F) << 6) | (str[i+3] & 0x3F);
+                i += 4;
+            }
+            else {
+                i++;
+                continue;
+            }
+            
             result.push_back(u);
         }
         return result;
     }
 
+    // تحويل UTF-32 إلى UTF-8
     static std::string utf32_to_utf8(const std::u32string& str) {
         std::string result;
         for (char32_t u : str) {
-            if (u <= 0x7F) { result.push_back(static_cast<char>(u)); }
+            if (u <= 0x7F) {
+                result.push_back(static_cast<char>(u));
+            }
             else if (u <= 0x7FF) {
                 result.push_back(static_cast<char>(0xC0 | ((u >> 6) & 0x1F)));
                 result.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-            } else if (u <= 0xFFFF) {
+            }
+            else if (u <= 0xFFFF) {
                 result.push_back(static_cast<char>(0xE0 | ((u >> 12) & 0x0F)));
                 result.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
                 result.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-            } else {
+            }
+            else {
                 result.push_back(static_cast<char>(0xF0 | ((u >> 18) & 0x07)));
                 result.push_back(static_cast<char>(0x80 | ((u >> 12) & 0x3F)));
                 result.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
@@ -90,31 +130,49 @@ private:
     }
 
 public:
-    static std::string process(const std::string& input) {
+    static std::string shapeArabic(const std::string& input) {
         if (input.empty()) return input;
 
         std::u32string u32 = utf8_to_utf32(input);
-        const auto& map = getArabicMap();
+        const auto& glyphMap = getGlyphMap();
         std::u32string shaped;
 
         for (size_t i = 0; i < u32.size(); ++i) {
             char32_t current = u32[i];
-            if (map.find(current) == map.end()) {
+
+            // إذا لم يكن حرف عربي، احفظه كما هو
+            if (!isArabic(current)) {
                 shaped.push_back(current);
                 continue;
             }
 
-            bool prev_connects = (i > 0) && isArabic(u32[i-1]);
-            bool next_connects = (i + 1 < u32.size()) && isArabic(u32[i+1]);
+            // إذا لم يكن له أشكال مختلفة، احفظه كما هو
+            if (glyphMap.find(current) == glyphMap.end()) {
+                shaped.push_back(current);
+                continue;
+            }
 
-            const auto& g = map.at(current);
-            if (prev_connects && next_connects) shaped.push_back(g.medial);
-            else if (prev_connects) shaped.push_back(g.final_form);
-            else if (next_connects) shaped.push_back(g.initial);
-            else shaped.push_back(g.isolated);
+            // تحديد ما قبل وبعد
+            bool hasLeftConnection = (i > 0) && canConnectLeft(u32[i-1]);
+            bool hasRightConnection = (i + 1 < u32.size()) && canConnectRight(u32[i+1]);
+
+            const auto& forms = glyphMap.at(current);
+
+            // اختيار الشكل المناسب
+            if (hasLeftConnection && hasRightConnection) {
+                shaped.push_back(forms.medial);  // في الوسط
+            }
+            else if (hasLeftConnection) {
+                shaped.push_back(forms.final_form);  // في النهاية
+            }
+            else if (hasRightConnection) {
+                shaped.push_back(forms.initial);  // في البداية
+            }
+            else {
+                shaped.push_back(forms.isolated);  // منفصل
+            }
         }
 
-        // إبقاء ترتيب الكلمات والجمل طبيعي لمنع قلب الكلمات
         return utf32_to_utf8(shaped);
     }
 };
