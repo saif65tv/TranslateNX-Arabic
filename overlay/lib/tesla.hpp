@@ -1,5 +1,6 @@
 #include "arabic_font_bin.h"
 #include "harfbuzz_shaper.hpp"
+#include "tsl_utils.hpp"
 /**
  * Copyright (C) 2020 werwolv
  *
