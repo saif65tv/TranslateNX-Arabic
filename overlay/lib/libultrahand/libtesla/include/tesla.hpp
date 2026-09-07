@@ -4070,7 +4070,7 @@ namespace tsl {
                                 static_cast<float>(g.yOffset) * scale;
 
                             glyphs.push_back(dg);
-                            totalWidth += dg.advance;
+                            totalWidth += std::abs(dg.advance);
                         }
 
                         if (maxWidth > 0) {
@@ -4081,8 +4081,10 @@ namespace tsl {
                         }
 
                         if (draw) {
+                            // HarfBuzz returned an RTL visual run.
+                            // Start at the right edge and move left.
                             float penX =
-                                static_cast<float>(x);
+                                static_cast<float>(x) + totalWidth;
 
                             for (const auto& g : glyphs) {
                                 const s32 drawX =
@@ -4145,7 +4147,7 @@ namespace tsl {
                                     }
                                 }
 
-                                penX += g.advance;
+                                penX -= std::abs(g.advance);
                             }
                         }
 
