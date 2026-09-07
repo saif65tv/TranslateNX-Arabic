@@ -4082,7 +4082,7 @@ namespace tsl {
 
                         if (draw) {
                             float penX =
-                                static_cast<float>(x) + totalWidth;
+                                static_cast<float>(x);
 
                             for (const auto& g : glyphs) {
                                 const s32 drawX =
@@ -4145,7 +4145,7 @@ namespace tsl {
                                     }
                                 }
 
-                                penX -= g.advance;
+                                penX += g.advance;
                             }
                         }
 
