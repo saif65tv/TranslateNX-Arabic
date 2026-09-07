@@ -3,6 +3,7 @@
 #include <switch.h>
 #include <string>
 #include <vector>
+#include <cstdio>
 #include <harfbuzz/hb.h>
 #include <harfbuzz/hb-ot.h>
 
@@ -114,6 +115,20 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
 
     hb_shape(ctx.font, buffer, nullptr, 0);
 
+    /*
+     * Temporary HarfBuzz diagnostic.
+     * Writes only the first 5 Arabic shaping calls.
+     */
+    static int debugCount = 0;
+    if (debugCount < 5) {
+        FILE* fp = std::fopen("sdmc:/switch/translatenx_hb_debug.txt", "a");
+        if (fp) {
+            std::fprintf(fp, "=== SHAPE %d ===\\n", debugCount + 1);
+            std::fprintf(fp, "INPUT: %s\\n", text);
+            std::fclose(fp);
+        }
+    }
+
     unsigned int count = 0;
 
     hb_glyph_info_t* infos =
@@ -128,6 +143,31 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
     }
 
     output.reserve(count);
+
+    if (debugCount < 5) {
+        FILE* fp = std::fopen("sdmc:/switch/translatenx_hb_debug.txt", "a");
+        if (fp) {
+            std::fprintf(fp, "glyph_count=%u\\n", count);
+
+            for (unsigned int i = 0; i < count; i++) {
+                std::fprintf(
+                    fp,
+                    "glyph[%u] id=%u xAdvance=%d yAdvance=%d xOffset=%d yOffset=%d\\n",
+                    i,
+                    infos[i].codepoint,
+                    positions[i].x_advance,
+                    positions[i].y_advance,
+                    positions[i].x_offset,
+                    positions[i].y_offset
+                );
+            }
+
+            std::fprintf(fp, "\\n");
+            std::fclose(fp);
+        }
+
+        debugCount++;
+    }
 
     for (unsigned int i = 0; i < count; i++) {
         output.push_back({
