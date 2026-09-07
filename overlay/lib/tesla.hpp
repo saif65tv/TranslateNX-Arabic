@@ -1,3 +1,4 @@
+#include "arabic_helper.hpp"
 #include "arabic_font_bin.h"
 /**
  * Copyright (C) 2020 werwolv
@@ -754,6 +755,8 @@ namespace tsl {
              * @return Dimensions of drawn string
              */
             std::pair<u32, u32> drawString(const char* string, bool monospace, s32 x, s32 y, float fontSize, Color color, ssize_t maxWidth = 0) {
+                std::string _arabicProcessed = ArabicHelper::process(string);
+                string = _arabicProcessed.c_str();
                 s32 maxX = x;
                 s32 currX = x;
                 s32 currY = y;
