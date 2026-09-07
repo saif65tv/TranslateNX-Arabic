@@ -765,6 +765,16 @@ namespace tsl {
         float yOffset;
     };
 
+    struct Glyph {
+        stbtt_fontinfo *currFont;
+        float currFontSize;
+        int bounds[4];
+        int xAdvance;
+        u8 *glyphBmp;
+        int width;
+        int height;
+    };
+
     struct BitmapGlyph {
         u8* bitmap;
         int width;
