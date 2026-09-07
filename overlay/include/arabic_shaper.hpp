@@ -93,6 +93,7 @@ inline void decodeUtf8(const char* text, std::vector<u32>& cps) {
 inline bool isArabicCodepoint(u32 cp) {
     return getForms(cp) != nullptr ||
            (cp >= 0x064B && cp <= 0x065F) ||
+           (cp >= 0xFE70 && cp <= 0xFEFF) ||
            cp == 0x0670;
 }
 

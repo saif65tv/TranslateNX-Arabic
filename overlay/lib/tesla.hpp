@@ -845,7 +845,109 @@ namespace tsl {
 
                     }
 
-                    currX += static_cast<s32>(glyph->xAdvance * glyph->currFontSize);
+                    s32 advance = static_cast<s32>(glyph->xAdvance * glyph->currFontSize);
+
+                    /*
+                     * Arabic joining:
+                     *
+                     * stb_truetype renders each glyph independently and does
+                     * not apply the font's OpenType positioning.  For Arabic,
+                     * use the actual bitmap bounds to remove any visible gap
+                     * between two adjacent Arabic glyphs.
+                     */
+                    if (ArabicShaper::isArabicCodepoint(currCharacter)) {
+                        u32 nextCharacter = 0;
+                        ssize_t nextWidth = decode_utf8(
+                            &nextCharacter,
+                            reinterpret_cast<const u8*>(string)
+                        );
+
+                        if (nextWidth > 0 &&
+                            ArabicShaper::isArabicCodepoint(nextCharacter)) {
+
+                            u64 nextKey =
+                                (static_cast<u64>(nextCharacter) << 32) |
+                                static_cast<u64>(monospace) << 31 |
+                                static_cast<u64>(std::bit_cast<u32>(fontSize));
+
+                            Glyph* nextGlyph = nullptr;
+
+                            auto nextIt = s_glyphCache.find(nextKey);
+
+                            if (nextIt == s_glyphCache.end()) {
+                                nextGlyph = &s_glyphCache.emplace(nextKey, Glyph()).first->second;
+
+                                if (nextCharacter >= 0x0600 &&
+                                    stbtt_FindGlyphIndex(&this->m_arabicFont, nextCharacter))
+                                    nextGlyph->currFont = &this->m_arabicFont;
+                                else if (stbtt_FindGlyphIndex(&this->m_extFont, nextCharacter))
+                                    nextGlyph->currFont = &this->m_extFont;
+                                else if (this->m_hasLocalFont &&
+                                         stbtt_FindGlyphIndex(&this->m_stdFont, nextCharacter) == 0)
+                                    nextGlyph->currFont = &this->m_localFont;
+                                else
+                                    nextGlyph->currFont = &this->m_stdFont;
+
+                                nextGlyph->currFontSize =
+                                    stbtt_ScaleForPixelHeight(nextGlyph->currFont, fontSize);
+
+                                stbtt_GetCodepointBitmapBoxSubpixel(
+                                    nextGlyph->currFont,
+                                    nextCharacter,
+                                    nextGlyph->currFontSize,
+                                    nextGlyph->currFontSize,
+                                    0, 0,
+                                    &nextGlyph->bounds[0],
+                                    &nextGlyph->bounds[1],
+                                    &nextGlyph->bounds[2],
+                                    &nextGlyph->bounds[3]
+                                );
+
+                                int nextYAdvance = 0;
+
+                                stbtt_GetCodepointHMetrics(
+                                    nextGlyph->currFont,
+                                    monospace ? 'W' : nextCharacter,
+                                    &nextGlyph->xAdvance,
+                                    &nextYAdvance
+                                );
+
+                                nextGlyph->glyphBmp =
+                                    stbtt_GetCodepointBitmap(
+                                        nextGlyph->currFont,
+                                        nextGlyph->currFontSize,
+                                        nextGlyph->currFontSize,
+                                        nextCharacter,
+                                        &nextGlyph->width,
+                                        &nextGlyph->height,
+                                        nullptr,
+                                        nullptr
+                                    );
+                            } else {
+                                nextGlyph = &nextIt->second;
+                            }
+
+                            /*
+                             * Calculate the visible gap between the current
+                             * glyph's right edge and the next glyph's left
+                             * edge at the normal advance position.
+                             */
+                            if (nextGlyph != nullptr) {
+                                const s32 currentRight =
+                                    currX + glyph->bounds[2];
+
+                                const s32 nextLeft =
+                                    currX + advance + nextGlyph->bounds[0];
+
+                                const s32 gap = nextLeft - currentRight;
+
+                                if (gap > 0)
+                                    advance -= gap;
+                            }
+                        }
+                    }
+
+                    currX += advance;
 
                 } while (*string != '\0');
 
