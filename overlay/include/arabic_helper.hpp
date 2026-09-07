@@ -126,6 +126,59 @@ private:
         return result;
     }
 
+    static bool isArabicPresentationGlyph(char32_t c) {
+        return c >= 0xFE70 && c <= 0xFEFF;
+    }
+
+    // Reorder shaped Arabic runs for an LTR renderer.
+    // Arabic combining marks remain attached to their base glyph.
+    static std::u32string reorderVisual(const std::u32string& input) {
+        std::u32string output;
+
+        size_t i = 0;
+        while (i < input.size()) {
+            if (!isArabicPresentationGlyph(input[i])) {
+                output.push_back(input[i]);
+                i++;
+                continue;
+            }
+
+            size_t runStart = i;
+
+            while (i < input.size()) {
+                char32_t c = input[i];
+
+                if (isArabicPresentationGlyph(c) ||
+                    isMark(c) ||
+                    c == U' ' ||
+                    c == U'\t') {
+                    i++;
+                } else {
+                    break;
+                }
+            }
+
+            size_t end = i;
+
+            // Copy Arabic clusters in reverse visual order.
+            while (end > runStart) {
+                size_t base = end - 1;
+
+                while (base > runStart && isMark(input[base])) {
+                    base--;
+                }
+
+                for (size_t j = base; j < end; j++) {
+                    output.push_back(input[j]);
+                }
+
+                end = base;
+            }
+        }
+
+        return output;
+    }
+
 public:
     static std::string process(const std::string& input) {
         if (input.empty()) {
@@ -193,7 +246,7 @@ public:
             }
         }
 
-        return encode(output);
+        return encode(reorderVisual(output));
     }
 };
 
