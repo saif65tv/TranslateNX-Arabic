@@ -833,11 +833,6 @@ namespace tsl {
         if (tsl::ArabicHarfBuzz::shape(string, glyphs) && !glyphs.empty()) {
             auto& hbctx = tsl::ArabicHarfBuzz::getContext();
 
-            const unsigned int upem = hb_face_get_upem(hbctx.face);
-
-            const float hbScale =
-                (upem > 0) ? (fontSize / float(upem)) : 1.0f;
-
             /*
              * stb's scale is in font units -> pixels.
              * Tajawal's stb scale should use the same font-size metric
@@ -848,6 +843,8 @@ namespace tsl {
                     &this->m_arabicFont,
                     fontSize
                 );
+
+            const float hbScale = stbScale;
 
             struct DrawGlyph {
                 BitmapGlyph bitmap;
@@ -898,12 +895,14 @@ namespace tsl {
              *
              * Therefore we DO NOT reverse anything here.
              */
-            float penX = float(x);
+            float penX = float(x) + lineWidth;
             const float baselineY = float(y);
 
             u32 drawnWidth = 0;
 
             for (const auto& g : drawGlyphs) {
+                penX -= g.advance;
+
                 const int gx =
                     static_cast<int>(
                         std::round(
@@ -927,9 +926,7 @@ namespace tsl {
                     );
 
                 drawBitmapGlyph(g.bitmap, gx, gy);
-
-                penX += g.advance;
-            }
+}
 
             /*
              * Free the temporary glyph bitmaps.
