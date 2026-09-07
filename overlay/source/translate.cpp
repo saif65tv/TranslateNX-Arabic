@@ -285,7 +285,8 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
     } else {
         result.success = true;
     }
-        return ArabicHelper::process(result);
+        result.text = ArabicHelper::process(result.text);
+        return result;
 }
 
 } // namespace Translate
