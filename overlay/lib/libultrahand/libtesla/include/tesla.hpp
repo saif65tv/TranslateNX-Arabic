@@ -4083,10 +4083,8 @@ namespace tsl {
                         if (draw) {
                             // HarfBuzz returned an RTL visual run.
                             // Start at the right edge and move left.
-                            std::reverse(glyphs.begin(), glyphs.end());
-
-
-                            float penX = static_cast<float>(x);
+                            
+                            float penX = static_cast<float>(x) + totalWidth;
 
                             for (const auto& g : glyphs) {
                                 const s32 drawX =
@@ -4149,7 +4147,7 @@ namespace tsl {
                                     }
                                 }
 
-                                penX += std::abs(g.advance);
+                                penX -= std::abs(g.advance);
                             }
                         }
 
