@@ -901,7 +901,6 @@ namespace tsl {
             u32 drawnWidth = 0;
 
             for (const auto& g : drawGlyphs) {
-                penX -= g.advance;
 
                 const int gx =
                     static_cast<int>(
@@ -926,7 +925,8 @@ namespace tsl {
                     );
 
                 drawBitmapGlyph(g.bitmap, gx, gy);
-}
+                penX -= g.advance;
+            }
 
             /*
              * Free the temporary glyph bitmaps.
