@@ -3614,6 +3614,61 @@ namespace tsl {
         template<typename, tsl::impl::LaunchFlags>
         friend int loop(int argc, char** argv);
 
+        std::unique_ptr<tsl::Gui>& swapTo(std::unique_ptr<tsl::Gui>&& gui, u32 count = 1) {
+
+            isNavigatingBackwards.store(true, std::memory_order_release);
+            
+            // Clamp count to available stack size to prevent underflow
+            const u32 actualCount = std::min(count, static_cast<u32>(this->m_guiStack.size()));
+            
+            if (actualCount > 1) {
+                // Pop the specified number of GUIs
+                for (u32 i = 0; i < actualCount; ++i) {
+                    this->m_guiStack.pop();
+                }
+            } else {
+                this->m_guiStack.pop();
+            }
+
+
+
+            if (!this->m_guiStack.empty() &&
+                this->m_guiStack.top() != nullptr &&
+                this->m_guiStack.top()->m_focusedElement != nullptr)
+                this->m_guiStack.top()->m_focusedElement->resetClickAnimation();
+            
+            isNavigatingBackwards.store(false, std::memory_order_release);
+
+            // Create the top element of the new Gui
+            gui->m_topElement = gui->createUI();
+
+            
+            // Push the new Gui onto the stack
+            this->m_guiStack.push(std::move(gui));
+
+            return this->m_guiStack.top();
+        }
+
+        /**
+         * @brief Creates a new Gui and changes to it
+         *
+         * @tparam G Gui to create
+         * @tparam Args Arguments to pass to the Gui
+         * @param args Arguments to pass to the Gui
+         * @return Reference to the newly created Gui
+         */
+        // Template version without clearGlyphCache (for backward compatibility)
+        template<typename G, typename ...Args>
+        std::unique_ptr<tsl::Gui>& swapTo(SwapDepth depth, Args&&... args) {
+            return this->swapTo(std::make_unique<G>(std::forward<Args>(args)...), depth.value);
+        }
+        
+        template<typename G, typename ...Args>
+        std::unique_ptr<tsl::Gui>& swapTo(Args&&... args) {
+            return this->swapTo(std::make_unique<G>(std::forward<Args>(args)...), 1);
+        }
+        
+
         friend class tsl::Gui;
     };
 
