@@ -1,3 +1,4 @@
+#include "arabic_font_bin.h"
 /**
  * Copyright (C) 2020 werwolv
  *
@@ -798,7 +799,9 @@ namespace tsl {
                         /* Cache glyph */
                         glyph = &s_glyphCache.emplace(key, Glyph()).first->second;
 
-                        if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
+                        if (currCharacter >= 0x0600 && stbtt_FindGlyphIndex(&this->m_arabicFont, currCharacter))
+                            glyph->currFont = &this->m_arabicFont;
+                        else if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
                             glyph->currFont = &this->m_extFont;
                         else if(this->m_hasLocalFont && stbtt_FindGlyphIndex(&this->m_stdFont, currCharacter)==0)
                             glyph->currFont = &this->m_localFont;
@@ -872,7 +875,9 @@ namespace tsl {
 
                     stbtt_fontinfo *currFont = nullptr;
 
-                    if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
+                    if (currCharacter >= 0x0600 && stbtt_FindGlyphIndex(&this->m_arabicFont, currCharacter))
+                        currFont = &this->m_arabicFont;
+                    else if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
                         currFont = &this->m_extFont;
                     else if(this->m_hasLocalFont && stbtt_FindGlyphIndex(&this->m_stdFont, currCharacter)==0)
                         currFont = &this->m_localFont;
@@ -930,7 +935,7 @@ namespace tsl {
 
             std::stack<ScissoringConfig> m_scissoringStack;
 
-            stbtt_fontinfo m_stdFont, m_localFont, m_extFont;
+            stbtt_fontinfo m_stdFont, m_localFont, m_extFont, m_arabicFont;
             bool m_hasLocalFont = false;
 
             static inline float s_opacity = 1.0F;
@@ -1135,6 +1140,7 @@ namespace tsl {
 
                 fontBuffer = reinterpret_cast<u8*>(extFontData.address);
                 stbtt_InitFont(&this->m_extFont, fontBuffer, stbtt_GetFontOffsetForIndex(fontBuffer, 0));
+                stbtt_InitFont(&this->m_arabicFont, arabic_font_bin, stbtt_GetFontOffsetForIndex(arabic_font_bin, 0));
 
                 return 0;
             }
