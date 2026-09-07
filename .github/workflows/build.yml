@@ -8,20 +8,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: devkitpro/devkita64:latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Build overlay
+      - name: Build overlay using devkitPro
         run: |
-          cd overlay
-          make clean
-          make
+          docker run --rm -v ${{ github.workspace }}:/source devkitpro/devkita64:latest bash -c "cd /source/overlay && make clean && make"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: translatenx-arabic
           path: overlay/translatenx.ovl
