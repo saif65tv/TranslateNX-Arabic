@@ -15,6 +15,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check HarfBuzz in devkitPro
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/overlay devkitpro/devkita64:latest bash -lc "
+            echo '=== HARFBUZZ ==='
+            command -v hb-shape || true
+            find /opt/devkitpro -type f \( -name 'hb.h' -o -name 'libharfbuzz.a' -o -name 'libharfbuzz.so*' \) 2>/dev/null | head -30
+            echo '=== PKG CONFIG ==='
+            pkg-config --modversion harfbuzz 2>/dev/null || true
+          "
+
       - name: Build overlay with devkitPro
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/overlay devkitpro/devkita64:latest bash -c "make clean && make"
