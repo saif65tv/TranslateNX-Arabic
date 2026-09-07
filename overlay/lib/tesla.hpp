@@ -756,11 +756,6 @@ namespace tsl {
              */
             std::pair<u32, u32> drawString(const char* string, bool monospace, s32 x, s32 y, float fontSize, Color color, ssize_t maxWidth = 0) {
                 std::string shapedString = ArabicShaper::shape(string);
-                string = shapedString.c_str();
-
-                s32 maxX = x;
-                s32 currX = x;
-                s32 currY = y;
 
                 struct Glyph {
                     stbtt_fontinfo *currFont;
@@ -773,187 +768,284 @@ namespace tsl {
 
                 static std::unordered_map<u64, Glyph> s_glyphCache;
 
-                do {
+                auto getGlyph = [&](u32 currCharacter) -> Glyph* {
+                    u64 key =
+                        (static_cast<u64>(currCharacter) << 32) |
+                        static_cast<u64>(monospace) << 31 |
+                        static_cast<u64>(std::bit_cast<u32>(fontSize));
+
+                    auto it = s_glyphCache.find(key);
+
+                    if (it != s_glyphCache.end())
+                        return &it->second;
+
+                    Glyph *glyph =
+                        &s_glyphCache.emplace(key, Glyph()).first->second;
+
+                    if (currCharacter >= 0x0600 &&
+                        stbtt_FindGlyphIndex(&this->m_arabicFont, currCharacter))
+                        glyph->currFont = &this->m_arabicFont;
+                    else if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
+                        glyph->currFont = &this->m_extFont;
+                    else if (this->m_hasLocalFont &&
+                             stbtt_FindGlyphIndex(&this->m_stdFont, currCharacter) == 0)
+                        glyph->currFont = &this->m_localFont;
+                    else
+                        glyph->currFont = &this->m_stdFont;
+
+                    glyph->currFontSize =
+                        stbtt_ScaleForPixelHeight(glyph->currFont, fontSize);
+
+                    stbtt_GetCodepointBitmapBoxSubpixel(
+                        glyph->currFont,
+                        currCharacter,
+                        glyph->currFontSize,
+                        glyph->currFontSize,
+                        0, 0,
+                        &glyph->bounds[0],
+                        &glyph->bounds[1],
+                        &glyph->bounds[2],
+                        &glyph->bounds[3]
+                    );
+
+                    int yAdvance = 0;
+
+                    stbtt_GetCodepointHMetrics(
+                        glyph->currFont,
+                        monospace ? 'W' : currCharacter,
+                        &glyph->xAdvance,
+                        &yAdvance
+                    );
+
+                    glyph->glyphBmp =
+                        stbtt_GetCodepointBitmap(
+                            glyph->currFont,
+                            glyph->currFontSize,
+                            glyph->currFontSize,
+                            currCharacter,
+                            &glyph->width,
+                            &glyph->height,
+                            nullptr,
+                            nullptr
+                        );
+
+                    return glyph;
+                };
+
+                auto drawGlyph = [&](Glyph* glyph, u32 currCharacter, s32 penX, s32 currY) {
+                    if (!glyph ||
+                        glyph->glyphBmp == nullptr ||
+                        std::iswspace(currCharacter) ||
+                        fontSize <= 0 ||
+                        color.a == 0x0)
+                        return;
+
+                    auto drawX = penX + glyph->bounds[0];
+                    auto drawY = currY + glyph->bounds[1];
+
+                    for (s32 bmpY = 0; bmpY < glyph->height; bmpY++) {
+                        for (s32 bmpX = 0; bmpX < glyph->width; bmpX++) {
+                            auto bmpColor =
+                                glyph->glyphBmp[glyph->width * bmpY + bmpX] >> 4;
+
+                            if (bmpColor == 0xF) {
+                                this->setPixel(
+                                    drawX + bmpX,
+                                    drawY + bmpY,
+                                    color
+                                );
+                            } else if (bmpColor != 0x0) {
+                                Color tmpColor = color;
+                                tmpColor.a =
+                                    bmpColor * (float(tmpColor.a) / 0xF);
+
+                                this->setPixelBlendDst(
+                                    drawX + bmpX,
+                                    drawY + bmpY,
+                                    tmpColor
+                                );
+                            }
+                        }
+                    }
+                };
+
+                /*
+                 * Arabic text must be rendered from right to left.
+                 * The shaper keeps logical Arabic order, while this renderer
+                 * places the first logical character at the right side.
+                 */
+                if (ArabicShaper::isRtlText(shapedString.c_str())) {
+                    std::vector<std::vector<u32>> lines;
+                    std::vector<u32> currentLine;
+
+                    const u8* p =
+                        reinterpret_cast<const u8*>(shapedString.c_str());
+
+                    while (*p) {
+                        u32 cp = 0;
+                        ssize_t width =
+                            decode_utf8(&cp, p);
+
+                        if (width <= 0)
+                            break;
+
+                        if (cp == '\n') {
+                            lines.push_back(currentLine);
+                            currentLine.clear();
+                        } else {
+                            currentLine.push_back(cp);
+                        }
+
+                        p += width;
+                    }
+
+                    lines.push_back(currentLine);
+
+                    s32 currY = y;
+                    s32 maxLineWidth = 0;
+
+                    for (const auto& line : lines) {
+                        if (line.empty()) {
+                            currY += fontSize;
+                            continue;
+                        }
+
+                        std::vector<Glyph*> glyphs;
+                        std::vector<s32> advances;
+
+                        glyphs.reserve(line.size());
+                        advances.reserve(line.size());
+
+                        for (u32 cp : line) {
+                            Glyph* glyph = getGlyph(cp);
+
+                            glyphs.push_back(glyph);
+                            advances.push_back(
+                                static_cast<s32>(
+                                    glyph->xAdvance * glyph->currFontSize
+                                )
+                            );
+                        }
+
+                        /*
+                         * Remove visible gaps between adjacent Arabic glyphs.
+                         * For RTL, the next logical glyph is placed to the left.
+                         */
+                        for (size_t i = 0; i + 1 < glyphs.size(); ++i) {
+                            if (!ArabicShaper::isArabicCodepoint(line[i]) ||
+                                !ArabicShaper::isArabicCodepoint(line[i + 1]))
+                                continue;
+
+                            const Glyph* rightGlyph = glyphs[i];
+                            const Glyph* leftGlyph = glyphs[i + 1];
+
+                            const s32 rightLeft =
+                                -advances[i] + rightGlyph->bounds[0];
+
+                            const s32 leftRight =
+                                -advances[i] -
+                                advances[i + 1] +
+                                leftGlyph->bounds[2];
+
+                            const s32 gap = rightLeft - leftRight;
+
+                            if (gap > 0)
+                                advances[i + 1] -= gap;
+                        }
+
+                        s32 lineWidth = 0;
+                        for (s32 advance : advances)
+                            lineWidth += advance;
+
+                        if (maxWidth > 0 && lineWidth > maxWidth)
+                            lineWidth = maxWidth;
+
+                        maxLineWidth = std::max(maxLineWidth, lineWidth);
+
+                        /*
+                         * Arabic logical order is:
+                         * right -> left.
+                         *
+                         * The first logical glyph is therefore placed
+                         * at the right edge first, then the pen moves left.
+                         */
+                        s32 penX = x + lineWidth;
+
+                        for (size_t i = 0; i < glyphs.size(); ++i) {
+                            s32 glyphX = penX - advances[i];
+
+                            drawGlyph(
+                                glyphs[i],
+                                line[i],
+                                glyphX,
+                                currY
+                            );
+
+                            penX = glyphX;
+                        }
+
+                        currY += fontSize;
+                    }
+
+                    return {
+                        static_cast<u32>(std::max<s32>(0, maxLineWidth)),
+                        static_cast<u32>(std::max<s32>(0, currY - y))
+                    };
+                }
+
+                /*
+                 * Original LTR renderer for English, numbers and other text.
+                 */
+                const char* cursor = shapedString.c_str();
+
+                s32 maxX = x;
+                s32 currX = x;
+                s32 currY = y;
+
+                while (*cursor != '\0') {
                     if (maxWidth > 0 && maxWidth < (currX - x))
                         break;
 
-                    u32 currCharacter;
-                    ssize_t codepointWidth = decode_utf8(&currCharacter, reinterpret_cast<const u8*>(string));
+                    u32 currCharacter = 0;
+
+                    ssize_t codepointWidth =
+                        decode_utf8(
+                            &currCharacter,
+                            reinterpret_cast<const u8*>(cursor)
+                        );
 
                     if (codepointWidth <= 0)
                         break;
 
-                    string += codepointWidth;
+                    cursor += codepointWidth;
 
                     if (currCharacter == '\n') {
                         maxX = std::max(currX, maxX);
-
                         currX = x;
                         currY += fontSize;
-
                         continue;
                     }
 
-                    u64 key = (static_cast<u64>(currCharacter) << 32) | static_cast<u64>(monospace) << 31 | static_cast<u64>(std::bit_cast<u32>(fontSize));
+                    Glyph* glyph = getGlyph(currCharacter);
 
-                    Glyph *glyph = nullptr;
+                    drawGlyph(
+                        glyph,
+                        currCharacter,
+                        currX,
+                        currY
+                    );
 
-                    auto it = s_glyphCache.find(key);
-                    if (it == s_glyphCache.end()) {
-                        /* Cache glyph */
-                        glyph = &s_glyphCache.emplace(key, Glyph()).first->second;
-
-                        if (currCharacter >= 0x0600 && stbtt_FindGlyphIndex(&this->m_arabicFont, currCharacter))
-                            glyph->currFont = &this->m_arabicFont;
-                        else if (stbtt_FindGlyphIndex(&this->m_extFont, currCharacter))
-                            glyph->currFont = &this->m_extFont;
-                        else if(this->m_hasLocalFont && stbtt_FindGlyphIndex(&this->m_stdFont, currCharacter)==0)
-                            glyph->currFont = &this->m_localFont;
-                        else
-                            glyph->currFont = &this->m_stdFont;
-
-                        glyph->currFontSize = stbtt_ScaleForPixelHeight(glyph->currFont, fontSize);
-
-                        stbtt_GetCodepointBitmapBoxSubpixel(glyph->currFont, currCharacter, glyph->currFontSize, glyph->currFontSize,
-                                                            0, 0, &glyph->bounds[0], &glyph->bounds[1], &glyph->bounds[2], &glyph->bounds[3]);
-
-                        int yAdvance = 0;
-                        stbtt_GetCodepointHMetrics(glyph->currFont, monospace ? 'W' : currCharacter, &glyph->xAdvance, &yAdvance);
-
-                        glyph->glyphBmp = stbtt_GetCodepointBitmap(glyph->currFont, glyph->currFontSize, glyph->currFontSize, currCharacter, &glyph->width, &glyph->height, nullptr, nullptr);
-                    } else {
-                        /* Use cached glyph */
-                        glyph = &it->second;
-                    }
-
-                    if (glyph->glyphBmp != nullptr && !std::iswspace(currCharacter) && fontSize > 0 && color.a != 0x0) {
-
-                        auto x = currX + glyph->bounds[0];
-                        auto y = currY + glyph->bounds[1];
-                        for (s32 bmpY = 0; bmpY < glyph->height; bmpY++) {
-                            for (s32 bmpX = 0; bmpX < glyph->width; bmpX++) {
-                                auto bmpColor = glyph->glyphBmp[glyph->width * bmpY + bmpX] >> 4;
-                                if (bmpColor == 0xF) {
-                                    this->setPixel(x + bmpX, y + bmpY, color);
-                                } else if (bmpColor != 0x0) {
-                                    Color tmpColor = color;
-                                    tmpColor.a = bmpColor * (float(tmpColor.a) / 0xF);
-                                    this->setPixelBlendDst(x + bmpX, y + bmpY, tmpColor);
-                                }
-                            }
-                        }
-
-                    }
-
-                    s32 advance = static_cast<s32>(glyph->xAdvance * glyph->currFontSize);
-
-                    /*
-                     * Arabic joining:
-                     *
-                     * stb_truetype renders each glyph independently and does
-                     * not apply the font's OpenType positioning.  For Arabic,
-                     * use the actual bitmap bounds to remove any visible gap
-                     * between two adjacent Arabic glyphs.
-                     */
-                    if (ArabicShaper::isArabicCodepoint(currCharacter)) {
-                        u32 nextCharacter = 0;
-                        ssize_t nextWidth = decode_utf8(
-                            &nextCharacter,
-                            reinterpret_cast<const u8*>(string)
-                        );
-
-                        if (nextWidth > 0 &&
-                            ArabicShaper::isArabicCodepoint(nextCharacter)) {
-
-                            u64 nextKey =
-                                (static_cast<u64>(nextCharacter) << 32) |
-                                static_cast<u64>(monospace) << 31 |
-                                static_cast<u64>(std::bit_cast<u32>(fontSize));
-
-                            Glyph* nextGlyph = nullptr;
-
-                            auto nextIt = s_glyphCache.find(nextKey);
-
-                            if (nextIt == s_glyphCache.end()) {
-                                nextGlyph = &s_glyphCache.emplace(nextKey, Glyph()).first->second;
-
-                                if (nextCharacter >= 0x0600 &&
-                                    stbtt_FindGlyphIndex(&this->m_arabicFont, nextCharacter))
-                                    nextGlyph->currFont = &this->m_arabicFont;
-                                else if (stbtt_FindGlyphIndex(&this->m_extFont, nextCharacter))
-                                    nextGlyph->currFont = &this->m_extFont;
-                                else if (this->m_hasLocalFont &&
-                                         stbtt_FindGlyphIndex(&this->m_stdFont, nextCharacter) == 0)
-                                    nextGlyph->currFont = &this->m_localFont;
-                                else
-                                    nextGlyph->currFont = &this->m_stdFont;
-
-                                nextGlyph->currFontSize =
-                                    stbtt_ScaleForPixelHeight(nextGlyph->currFont, fontSize);
-
-                                stbtt_GetCodepointBitmapBoxSubpixel(
-                                    nextGlyph->currFont,
-                                    nextCharacter,
-                                    nextGlyph->currFontSize,
-                                    nextGlyph->currFontSize,
-                                    0, 0,
-                                    &nextGlyph->bounds[0],
-                                    &nextGlyph->bounds[1],
-                                    &nextGlyph->bounds[2],
-                                    &nextGlyph->bounds[3]
-                                );
-
-                                int nextYAdvance = 0;
-
-                                stbtt_GetCodepointHMetrics(
-                                    nextGlyph->currFont,
-                                    monospace ? 'W' : nextCharacter,
-                                    &nextGlyph->xAdvance,
-                                    &nextYAdvance
-                                );
-
-                                nextGlyph->glyphBmp =
-                                    stbtt_GetCodepointBitmap(
-                                        nextGlyph->currFont,
-                                        nextGlyph->currFontSize,
-                                        nextGlyph->currFontSize,
-                                        nextCharacter,
-                                        &nextGlyph->width,
-                                        &nextGlyph->height,
-                                        nullptr,
-                                        nullptr
-                                    );
-                            } else {
-                                nextGlyph = &nextIt->second;
-                            }
-
-                            /*
-                             * Calculate the visible gap between the current
-                             * glyph's right edge and the next glyph's left
-                             * edge at the normal advance position.
-                             */
-                            if (nextGlyph != nullptr) {
-                                const s32 currentRight =
-                                    currX + glyph->bounds[2];
-
-                                const s32 nextLeft =
-                                    currX + advance + nextGlyph->bounds[0];
-
-                                const s32 gap = nextLeft - currentRight;
-
-                                if (gap > 0)
-                                    advance -= gap;
-                            }
-                        }
-                    }
-
-                    currX += advance;
-
-                } while (*string != '\0');
+                    currX += static_cast<s32>(
+                        glyph->xAdvance * glyph->currFontSize
+                    );
+                }
 
                 maxX = std::max(currX, maxX);
 
-                return { maxX - x, currY - y };
+                return {
+                    static_cast<u32>(std::max<s32>(0, maxX - x)),
+                    static_cast<u32>(std::max<s32>(0, currY - y))
+                };
             }
 
             /**

@@ -207,8 +207,29 @@ inline std::vector<u32> shapeArabicToken(const std::vector<u32>& token) {
         shaped.push_back(result);
     }
 
-    std::reverse(shaped.begin(), shaped.end());
     return shaped;
+}
+
+inline bool isRtlText(const char* text) {
+    if (!text || !*text)
+        return false;
+
+    const u8* p = reinterpret_cast<const u8*>(text);
+
+    while (*p) {
+        u32 cp = 0;
+        ssize_t width = decode_utf8(&cp, p);
+
+        if (width <= 0)
+            break;
+
+        if (isArabicCodepoint(cp))
+            return true;
+
+        p += width;
+    }
+
+    return false;
 }
 
 inline std::string shape(const char* text) {
@@ -265,11 +286,6 @@ inline std::string shape(const char* text) {
 
             if (!current.empty())
                 tokens.push_back(current);
-
-            /*
-             * Reverse token order only when the line is Arabic.
-             */
-            std::reverse(tokens.begin(), tokens.end());
 
             for (size_t t = 0; t < tokens.size(); ++t) {
                 const auto& token = tokens[t];
