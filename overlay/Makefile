@@ -22,7 +22,7 @@ SOURCES     := source \
                lib/libultrahand/libultra/source \
                lib/libultrahand/common
 DATA		:=	data
-INCLUDES    := include lib lib/libultrahand/libtesla/include lib/libultrahand/libultra/include lib/libultrahand/common
+INCLUDES    := include lib/libultrahand/libtesla/include lib/libultrahand/libultra/include lib/libultrahand/common
 
 NO_ICON		:=  1
 

@@ -116,21 +116,6 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
 
     hb_shape(ctx.font, buffer, nullptr, 0);
 
-    /*
-     * Temporary HarfBuzz diagnostic.
-     */
-    static int debugCount = 0;
-    if (debugCount < 5) {
-        char msg[256];
-        std::snprintf(
-            msg,
-            sizeof(msg),
-            "TranslateNX HB SHAPE %d: input detected",
-            debugCount + 1
-        );
-        fsOutputAccessLogToSdCard(msg, std::strlen(msg));
-    }
-
     unsigned int count = 0;
 
     hb_glyph_info_t* infos =
@@ -147,26 +132,7 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
     output.reserve(count);
 
     for (unsigned int i = 0; i < count; i++) {
-                std::fprintf(
-                    fp,
-                    "glyph[%u] id=%u xAdvance=%d yAdvance=%d xOffset=%d yOffset=%d\\n",
-                    i,
-                    infos[i].codepoint,
-                    positions[i].x_advance,
-                    positions[i].y_advance,
-                    positions[i].x_offset,
-                    positions[i].y_offset
-                );
-            }
-
-            std::fprintf(fp, "\\n");
-            std::fclose(fp);
-        }
-
-        debugCount++;
-    }
-
-    for (unsigned int i = 0; i < count; i++) {
+            for (unsigned int i = 0; i < count; i++) {
         output.push_back({
             infos[i].codepoint,
             positions[i].x_advance,
@@ -177,9 +143,6 @@ inline bool shape(const char* text, std::vector<Glyph>& output) {
     }
 
     hb_buffer_destroy(buffer);
-
-    if (debugCount < 5)
-        debugCount++;
 
     return true;
 }
