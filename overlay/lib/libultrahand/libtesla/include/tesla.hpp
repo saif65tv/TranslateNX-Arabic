@@ -95,6 +95,8 @@
     #define STB_TRUETYPE_IMPLEMENTATION
 #endif
 #include "stb_truetype.h"
+#include "harfbuzz_shaper.hpp"
+#include "arabic_font_bin.h"
 
 
 #define ELEMENT_BOUNDS(elem) elem->getX(), elem->getY(), elem->getWidth(), elem->getHeight()
@@ -1800,6 +1802,7 @@ namespace tsl {
             stbtt_fontinfo m_localFontCN;         // Chinese Simplified - always loaded
             stbtt_fontinfo m_localFontTW;         // Chinese Traditional - always loaded
             stbtt_fontinfo m_localFontKO;         // Korean - always loaded
+            stbtt_fontinfo m_arabicFont;           // Embedded Tajawal Arabic font
             bool m_hasLocalFont = false;          // Whether primary local font is valid
 
             static inline float s_opacity = 1.0F;
@@ -4016,6 +4019,157 @@ namespace tsl {
                 
                 if (text->empty() || fontSize == 0) return {0, 0};
                 
+                /* TRANSLATENX ARABIC HARFBUZZ PATH */
+                if (tsl::ArabicHarfBuzz::containsArabic(text->c_str())) {
+                    std::vector<tsl::ArabicHarfBuzz::Glyph> shaped;
+
+                    if (tsl::ArabicHarfBuzz::shape(text->c_str(), shaped) &&
+                        !shaped.empty()) {
+
+                        const float scale =
+                            stbtt_ScaleForPixelHeight(
+                                &this->m_arabicFont,
+                                static_cast<float>(fontSize)
+                            );
+
+                        struct ArabicDrawGlyph {
+                            u8* bitmap = nullptr;
+                            int width = 0;
+                            int height = 0;
+                            int xoff = 0;
+                            int yoff = 0;
+                            float advance = 0.0f;
+                            float xOffset = 0.0f;
+                            float yOffset = 0.0f;
+                        };
+
+                        std::vector<ArabicDrawGlyph> glyphs;
+                        glyphs.reserve(shaped.size());
+
+                        float totalWidth = 0.0f;
+
+                        for (const auto& g : shaped) {
+                            ArabicDrawGlyph dg{};
+
+                            dg.bitmap = stbtt_GetGlyphBitmap(
+                                &this->m_arabicFont,
+                                scale,
+                                scale,
+                                static_cast<int>(g.id),
+                                &dg.width,
+                                &dg.height,
+                                &dg.xoff,
+                                &dg.yoff
+                            );
+
+                            dg.advance =
+                                static_cast<float>(g.xAdvance) * scale;
+                            dg.xOffset =
+                                static_cast<float>(g.xOffset) * scale;
+                            dg.yOffset =
+                                static_cast<float>(g.yOffset) * scale;
+
+                            glyphs.push_back(dg);
+                            totalWidth += dg.advance;
+                        }
+
+                        if (maxWidth > 0) {
+                            totalWidth = std::min(
+                                totalWidth,
+                                static_cast<float>(maxWidth)
+                            );
+                        }
+
+                        if (draw) {
+                            float penX =
+                                static_cast<float>(x) + totalWidth;
+
+                            for (const auto& g : glyphs) {
+                                const s32 drawX =
+                                    static_cast<s32>(
+                                        std::round(
+                                            penX +
+                                            g.xOffset +
+                                            static_cast<float>(g.xoff)
+                                        )
+                                    );
+
+                                const s32 drawY =
+                                    static_cast<s32>(
+                                        std::round(
+                                            static_cast<float>(y) -
+                                            g.yOffset +
+                                            static_cast<float>(g.yoff)
+                                        )
+                                    );
+
+                                if (g.bitmap) {
+                                    for (int py = 0; py < g.height; ++py) {
+                                        for (int px = 0; px < g.width; ++px) {
+                                            const u8 alpha4 =
+                                                g.bitmap[
+                                                    py * g.width + px
+                                                ] >> 4;
+
+                                            if (alpha4 == 0)
+                                                continue;
+
+                                            const s32 outX = drawX + px;
+                                            const s32 outY = drawY + py;
+
+                                            if (alpha4 == 0xF) {
+                                                this->setPixel(
+                                                    outX,
+                                                    outY,
+                                                    defaultColor
+                                                );
+                                            } else {
+                                                Color blended = defaultColor;
+                                                blended.a =
+                                                    static_cast<u8>(
+                                                        alpha4 *
+                                                        (
+                                                            static_cast<float>(
+                                                                defaultColor.a
+                                                            ) / 15.0f
+                                                        )
+                                                    );
+
+                                                this->setPixelBlendDst(
+                                                    outX,
+                                                    outY,
+                                                    blended
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+
+                                penX -= g.advance;
+                            }
+                        }
+
+                        for (auto& g : glyphs) {
+                            if (g.bitmap) {
+                                stbtt_FreeBitmap(
+                                    g.bitmap,
+                                    nullptr
+                                );
+                                g.bitmap = nullptr;
+                            }
+                        }
+
+                        return {
+                            static_cast<s32>(
+                                std::ceil(
+                                    std::max(0.0f, totalWidth)
+                                )
+                            ),
+                            static_cast<s32>(fontSize)
+                        };
+                    }
+                }
+
                 const float maxWidthLimit = maxWidth > 0 ? x + maxWidth : std::numeric_limits<float>::max();
                 
                 // Check if highlighting is enabled
@@ -5300,6 +5454,13 @@ namespace tsl {
                 fontBuffer = reinterpret_cast<u8*>(koFontData.address);
                 stbtt_InitFont(&this->m_localFontKO, fontBuffer, stbtt_GetFontOffsetForIndex(fontBuffer, 0));
                 
+                // Initialize embedded Tajawal Arabic font
+                stbtt_InitFont(
+                    &this->m_arabicFont,
+                    arabic_font_bin,
+                    stbtt_GetFontOffsetForIndex(arabic_font_bin, 0)
+                );
+
                 // Initialize the shared font manager
                 FontManager::initializeFonts(&this->m_stdFont, 
                                            &this->m_localFont,
