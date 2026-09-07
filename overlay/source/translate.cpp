@@ -30,6 +30,10 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
     TranslateResult result;
     if (lines.empty()) {
         result.errorMsg = "Çeviri: OCR'dan metin gelmedi";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -64,6 +68,10 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
         } else {
             result.errorMsg = "MyMemory: HTTP " + std::to_string(resp.statusCode);
         }
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -81,11 +89,19 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
 
     if (result.translatedText.empty()) {
         result.errorMsg = "MyMemory: Boş yanıt döndü — API sınırı aşıldı olabilir";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
     if (result.translatedText.find("QUERY LENGTH") != std::string::npos) {
         result.errorMsg = "MyMemory: Metin çok uzun (500 karakter sınırı aşıldı)";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -102,6 +118,10 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
 
     // Eğer sayı uyuşmuyorsa, düz metin gibi kabul edeceğiz
     result.success = true;
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
 }
 
@@ -112,6 +132,10 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
     TranslateResult result;
     if (lines.empty() || apiKey.empty()) {
         result.errorMsg = "DeepL: API key girilmemiş";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -161,6 +185,10 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
         } else {
             result.errorMsg = "DeepL: HTTP " + std::to_string(resp.statusCode);
         }
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -185,10 +213,18 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
 
     if (result.translatedLines.empty()) {
         result.errorMsg = "DeepL: Boş yanıt döndü — API key doğru mu?";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
     result.success = true;
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
 }
 
@@ -198,10 +234,18 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
     TranslateResult result;
     if (apiKey.empty()) {
         result.errorMsg = "Google Cloud Translate: API key girilmemiş";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
     if (lines.empty()) {
         result.errorMsg = "Google Cloud Translate: Çevrilecek metin yok";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -248,6 +292,10 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
         } else {
             result.errorMsg = "Google Cloud Translate: HTTP " + std::to_string(resp.statusCode) + " — " + resp.errorStr;
         }
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -255,6 +303,10 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
     cJSON* respObj = cJSON_Parse(resp.body.c_str());
     if (!respObj) {
         result.errorMsg = "Google Cloud Translate: Sunucu yanıtı işlenemedi (JSON parse hatası)";
+        result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
     }
 
@@ -286,6 +338,9 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
         result.success = true;
     }
         result.translatedText = ArabicHelper::process(result.translatedText);
+        for (auto& line : result.translatedLines) {
+            line = ArabicHelper::process(line);
+        }
         return result;
 }
 
