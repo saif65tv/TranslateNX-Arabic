@@ -4021,156 +4021,257 @@ namespace tsl {
                 
                 /* TRANSLATENX ARABIC HARFBUZZ PATH */
                 if (tsl::ArabicHarfBuzz::containsArabic(text->c_str())) {
-                    std::vector<tsl::ArabicHarfBuzz::Glyph> shaped;
+    /*
+     * Arabic RTL layout:
+     * - Shape each word first with HarfBuzz.
+     * - Reverse glyph order inside each shaped word.
+     * - Reverse word order.
+     *
+     * This keeps Arabic joining/ligatures intact while fixing
+     * the visual word order expected by the renderer.
+     */
+    const std::string sourceText = text->c_str();
 
-                    if (tsl::ArabicHarfBuzz::shape(text->c_str(), shaped) &&
-                        !shaped.empty()) {
+    std::vector<std::vector<tsl::ArabicHarfBuzz::Glyph>> words;
 
-                        const float scale =
-                            stbtt_ScaleForPixelHeight(
-                                &this->m_arabicFont,
-                                static_cast<float>(fontSize)
-                            );
+    size_t pos = 0;
+    while (pos < sourceText.size()) {
+        while (pos < sourceText.size() &&
+               sourceText[pos] == ' ') {
+            ++pos;
+        }
 
-                        struct ArabicDrawGlyph {
-                            u8* bitmap = nullptr;
-                            int width = 0;
-                            int height = 0;
-                            int xoff = 0;
-                            int yoff = 0;
-                            float advance = 0.0f;
-                            float xOffset = 0.0f;
-                            float yOffset = 0.0f;
-                        };
+        if (pos >= sourceText.size()) {
+            break;
+        }
 
-                        std::vector<ArabicDrawGlyph> glyphs;
-                        glyphs.reserve(shaped.size());
+        size_t endWord = sourceText.find(' ', pos);
+        if (endWord == std::string::npos) {
+            endWord = sourceText.size();
+        }
 
-                        float totalWidth = 0.0f;
+        const std::string word =
+            sourceText.substr(pos, endWord - pos);
 
-                        for (const auto& g : shaped) {
-                            ArabicDrawGlyph dg{};
+        std::vector<tsl::ArabicHarfBuzz::Glyph> shapedWord;
 
-                            dg.bitmap = stbtt_GetGlyphBitmap(
-                                &this->m_arabicFont,
-                                scale,
-                                scale,
-                                static_cast<int>(g.id),
-                                &dg.width,
-                                &dg.height,
-                                &dg.xoff,
-                                &dg.yoff
-                            );
+        if (!tsl::ArabicHarfBuzz::shape(
+                word.c_str(),
+                shapedWord
+            ) || shapedWord.empty()) {
+            return {
+                0,
+                static_cast<s32>(fontSize)
+            };
+        }
 
-                            dg.advance =
-                                static_cast<float>(g.xAdvance) * scale;
-                            dg.xOffset =
-                                static_cast<float>(g.xOffset) * scale;
-                            dg.yOffset =
-                                static_cast<float>(g.yOffset) * scale;
+        words.push_back(std::move(shapedWord));
+        pos = endWord;
+    }
 
-                            glyphs.push_back(dg);
-                            totalWidth += std::abs(dg.advance);
-                        }
+    if (words.empty()) {
+        return {
+            0,
+            static_cast<s32>(fontSize)
+        };
+    }
 
-                        if (maxWidth > 0) {
-                            totalWidth = std::min(
-                                totalWidth,
-                                static_cast<float>(maxWidth)
-                            );
-                        }
+    const float scale =
+        stbtt_ScaleForPixelHeight(
+            &this->m_arabicFont,
+            static_cast<float>(fontSize)
+        );
 
-                        if (draw) {
-                            // HarfBuzz returned an RTL visual run.
-                            // Start at the right edge and move left.
-                            
-                            float penX = static_cast<float>(x);
+    int spaceAdvance = 0;
+    int spaceLsb = 0;
 
-                            for (const auto& g : glyphs) {
-                                const s32 drawX =
-                                    static_cast<s32>(
-                                        std::round(
-                                            penX +
-                                            g.xOffset +
-                                            static_cast<float>(g.xoff)
-                                        )
-                                    );
+    stbtt_GetCodepointHMetrics(
+        &this->m_arabicFont,
+        ' ',
+        &spaceAdvance,
+        &spaceLsb
+    );
 
-                                const s32 drawY =
-                                    static_cast<s32>(
-                                        std::round(
-                                            static_cast<float>(y) -
-                                            g.yOffset +
-                                            static_cast<float>(g.yoff)
-                                        )
-                                    );
+    const float spaceWidth =
+        static_cast<float>(spaceAdvance) * scale;
 
-                                if (g.bitmap) {
-                                    for (int py = 0; py < g.height; ++py) {
-                                        for (int px = 0; px < g.width; ++px) {
-                                            const u8 alpha4 =
-                                                g.bitmap[
-                                                    py * g.width + px
-                                                ] >> 4;
+    struct ArabicDrawGlyph {
+        u8* bitmap = nullptr;
+        int width = 0;
+        int height = 0;
+        int xoff = 0;
+        int yoff = 0;
+        float advance = 0.0f;
+        float xOffset = 0.0f;
+        float yOffset = 0.0f;
+    };
 
-                                            if (alpha4 == 0)
-                                                continue;
+    std::vector<std::vector<ArabicDrawGlyph>> drawWords;
+    drawWords.reserve(words.size());
 
-                                            const s32 outX = drawX + px;
-                                            const s32 outY = drawY + py;
+    float totalWidth = 0.0f;
 
-                                            if (alpha4 == 0xF) {
-                                                this->setPixel(
-                                                    outX,
-                                                    outY,
-                                                    defaultColor
-                                                );
-                                            } else {
-                                                Color blended = defaultColor;
-                                                blended.a =
-                                                    static_cast<u8>(
-                                                        alpha4 *
-                                                        (
-                                                            static_cast<float>(
-                                                                defaultColor.a
-                                                            ) / 15.0f
-                                                        )
-                                                    );
+    for (const auto& word : words) {
+        std::vector<ArabicDrawGlyph> glyphs;
+        glyphs.reserve(word.size());
 
-                                                this->setPixelBlendDst(
-                                                    outX,
-                                                    outY,
-                                                    blended
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
+        for (const auto& g : word) {
+            ArabicDrawGlyph dg{};
 
-                                penX += std::abs(g.advance);
+            dg.bitmap = stbtt_GetGlyphBitmap(
+                &this->m_arabicFont,
+                scale,
+                scale,
+                static_cast<int>(g.id),
+                &dg.width,
+                &dg.height,
+                &dg.xoff,
+                &dg.yoff
+            );
+
+            dg.advance =
+                std::abs(
+                    static_cast<float>(g.xAdvance) * scale
+                );
+
+            dg.xOffset =
+                static_cast<float>(g.xOffset) * scale;
+
+            dg.yOffset =
+                static_cast<float>(g.yOffset) * scale;
+
+            glyphs.push_back(dg);
+            totalWidth += dg.advance;
+        }
+
+        drawWords.push_back(std::move(glyphs));
+    }
+
+    if (drawWords.size() > 1) {
+        totalWidth +=
+            spaceWidth *
+            static_cast<float>(drawWords.size() - 1);
+    }
+
+    if (maxWidth > 0) {
+        totalWidth = std::min(
+            totalWidth,
+            static_cast<float>(maxWidth)
+        );
+    }
+
+    if (draw) {
+        float penX = static_cast<float>(x);
+
+        /*
+         * Last logical word is drawn first on the left.
+         * Then previous words follow.
+         */
+        for (size_t wi = drawWords.size(); wi-- > 0;) {
+            const auto& word = drawWords[wi];
+
+            /*
+             * HarfBuzz RTL order is reversed here so that
+             * the shaped word appears naturally on screen.
+             */
+            for (size_t gi = word.size(); gi-- > 0;) {
+                const auto& g = word[gi];
+
+                const s32 drawX =
+                    static_cast<s32>(
+                        std::round(
+                            penX +
+                            g.xOffset +
+                            static_cast<float>(g.xoff)
+                        )
+                    );
+
+                const s32 drawY =
+                    static_cast<s32>(
+                        std::round(
+                            static_cast<float>(y) -
+                            g.yOffset +
+                            static_cast<float>(g.yoff)
+                        )
+                    );
+
+                if (g.bitmap) {
+                    for (int py = 0; py < g.height; ++py) {
+                        for (int px = 0; px < g.width; ++px) {
+                            const u8 alpha4 =
+                                g.bitmap[
+                                    py * g.width + px
+                                ] >> 4;
+
+                            if (alpha4 == 0) {
+                                continue;
                             }
-                        }
 
-                        for (auto& g : glyphs) {
-                            if (g.bitmap) {
-                                stbtt_FreeBitmap(
-                                    g.bitmap,
-                                    nullptr
+                            const s32 outX =
+                                drawX + px;
+
+                            const s32 outY =
+                                drawY + py;
+
+                            if (alpha4 == 0xF) {
+                                this->setPixel(
+                                    outX,
+                                    outY,
+                                    defaultColor
                                 );
-                                g.bitmap = nullptr;
+                            } else {
+                                Color blended = defaultColor;
+
+                                blended.a =
+                                    static_cast<u8>(
+                                        alpha4 *
+                                        (
+                                            static_cast<float>(
+                                                defaultColor.a
+                                            ) / 15.0f
+                                        )
+                                    );
+
+                                this->setPixelBlendDst(
+                                    outX,
+                                    outY,
+                                    blended
+                                );
                             }
                         }
-
-                        return {
-                            static_cast<s32>(
-                                std::ceil(
-                                    std::max(0.0f, totalWidth)
-                                )
-                            ),
-                            static_cast<s32>(fontSize)
-                        };
                     }
                 }
+
+                penX += g.advance;
+            }
+
+            if (wi != 0) {
+                penX += spaceWidth;
+            }
+        }
+    }
+
+    for (auto& word : drawWords) {
+        for (auto& g : word) {
+            if (g.bitmap) {
+                stbtt_FreeBitmap(
+                    g.bitmap,
+                    nullptr
+                );
+                g.bitmap = nullptr;
+            }
+        }
+    }
+
+    return {
+        static_cast<s32>(
+            std::ceil(
+                std::max(0.0f, totalWidth)
+            )
+        ),
+        static_cast<s32>(fontSize)
+    };
+}
 
                 const float maxWidthLimit = maxWidth > 0 ? x + maxWidth : std::numeric_limits<float>::max();
                 
