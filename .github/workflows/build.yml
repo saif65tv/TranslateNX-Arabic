@@ -32,5 +32,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: translatenx-arabic
+          name: TranslateNX-Arabic-OVL
           path: overlay/*.ovl
