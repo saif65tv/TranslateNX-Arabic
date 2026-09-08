@@ -164,20 +164,21 @@ static OcrWord tbMakeAnchor(
     return anchor;
 }
 
+
 static bool tbShouldJoin(
     const OcrWord& previous,
     const OcrWord& current,
-    size_t currentLineCount,
-    size_t currentCharCount
+    size_t blockLineCount,
+    size_t blockCharCount
 ) {
     if (previous.text.empty() || current.text.empty())
         return false;
 
-    // Never make absurdly large translation requests.
-    if (currentLineCount >= 8)
+    // Large enough for real dialogue paragraphs, but never the whole screen.
+    if (blockLineCount >= 12)
         return false;
 
-    if (currentCharCount + current.text.size() > 900)
+    if (blockCharCount + current.text.size() > 1800)
         return false;
 
     const float previousBottom = previous.y + previous.h;
@@ -190,8 +191,12 @@ static bool tbShouldJoin(
     const float lineHeight =
         std::max(0.01f, std::max(previous.h, current.h));
 
-    // They must be genuine adjacent lines.
-    if (verticalGap > std::max(0.035f, lineHeight * 1.55f))
+    /*
+     * OCR line spacing varies between games and fonts.
+     * Use a deliberately generous limit here because the OCR engine
+     * already identified these as separate lines.
+     */
+    if (verticalGap > std::max(0.08f, lineHeight * 3.0f))
         return false;
 
     const float previousRight = previous.x + previous.w;
@@ -204,31 +209,49 @@ static bool tbShouldJoin(
             std::max(previous.x, current.x)
         );
 
-    const float minWidth =
+    const float smallerWidth =
         std::max(0.01f, std::min(previous.w, current.w));
 
-    const float overlapRatio = overlap / minWidth;
+    const float overlapRatio =
+        overlap / smallerWidth;
 
-    const float leftDifference =
-        std::abs(previous.x - current.x);
+    const float previousCenter =
+        previous.x + previous.w * 0.5f;
 
-    // Same text column / same region.
-    if (overlapRatio < 0.20f && leftDifference > 0.12f)
+    const float currentCenter =
+        current.x + current.w * 0.5f;
+
+    const float centerDifference =
+        std::abs(previousCenter - currentCenter);
+
+    /*
+     * Same paragraph usually means:
+     * - substantial horizontal overlap, OR
+     * - nearly the same text-column center.
+     */
+    const bool sameTextColumn =
+        overlapRatio >= 0.10f ||
+        centerDifference <= 0.18f;
+
+    if (!sameTextColumn)
         return false;
 
-    // If previous line clearly finishes a sentence, normally stop.
-    // Exception: OCR can wrap after punctuation before a lowercase
-    // continuation.
-    if (tbEndsSentence(previous.text) &&
-        !tbLooksLikeContinuation(current.text)) {
+    /*
+     * Avoid combining tiny unrelated UI labels.
+     * Once one of the lines is substantial, allow normal paragraph
+     * continuation freely.
+     */
+    if (previous.text.size() < 8 &&
+        current.text.size() < 8) {
         return false;
     }
 
-    // Two very short neighboring items are more likely labels/buttons.
-    if (previous.text.size() < 12 &&
-        current.text.size() < 12) {
-        return false;
-    }
+    /*
+     * IMPORTANT:
+     * Do NOT split at '.', '!', '?' etc.
+     * A visual OCR line can end in punctuation while the next
+     * visual line is still part of the same translation unit.
+     */
 
     return true;
 }
