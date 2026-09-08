@@ -824,7 +824,7 @@ public:
                     return str;
                 };
 
-                auto linesTR = splitTextGlobal(item.translated, 30);
+                auto linesTR = splitTextGlobal(item.translated, 45);
                 auto linesJP = splitTextGlobal(item.word.text, 30);
                 
                 u16 itemHeight = (linesTR.size() * 25) + (linesJP.size() * 20) + 20;
