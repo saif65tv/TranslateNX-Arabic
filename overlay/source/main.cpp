@@ -406,54 +406,20 @@ public:
 // ═══════════════════════════════════════════════════════════════════════════
 // DÜZ METİN VE KAYDIRMA (SCROLL) SİSTEMİ
 // ═══════════════════════════════════════════════════════════════════════════
-static size_t utf8CharCount(const std::string& s) {
-    size_t count = 0;
-
-    for (size_t i = 0; i < s.size();) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-
-        if ((c & 0x80) == 0) {
-            i += 1;
-        } else if ((c & 0xE0) == 0xC0) {
-            i += 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            i += 3;
-        } else if ((c & 0xF8) == 0xF0) {
-            i += 4;
-        } else {
-            i += 1;
-        }
-
-        ++count;
-    }
-
-    return count;
-}
-
 std::vector<std::string> splitTextGlobal(const std::string& text, size_t maxLen) {
     std::vector<std::string> lines;
     std::string currentLine;
     std::string word;
-
     for (char c : text) {
         if (c == ' ' || c == '\n') {
-            const size_t currentChars = utf8CharCount(currentLine);
-            const size_t wordChars = utf8CharCount(word);
-
-            if (!currentLine.empty() &&
-                currentChars + wordChars + 1 > maxLen) {
-
+            if (!currentLine.empty() && currentLine.length() + word.length() + 1 > maxLen) {
                 lines.push_back(currentLine);
                 currentLine = word;
             } else {
-                if (!currentLine.empty())
-                    currentLine += " ";
-
+                if (!currentLine.empty()) currentLine += " ";
                 currentLine += word;
             }
-
             word.clear();
-
             if (c == '\n') {
                 lines.push_back(currentLine);
                 currentLine.clear();
@@ -462,27 +428,18 @@ std::vector<std::string> splitTextGlobal(const std::string& text, size_t maxLen)
             word += c;
         }
     }
-
     if (!word.empty()) {
-        const size_t currentChars = utf8CharCount(currentLine);
-        const size_t wordChars = utf8CharCount(word);
-
-        if (!currentLine.empty() &&
-            currentChars + wordChars + 1 > maxLen) {
-
+        if (!currentLine.empty() && currentLine.length() + word.length() + 1 > maxLen) {
             lines.push_back(currentLine);
             lines.push_back(word);
         } else {
-            if (!currentLine.empty())
-                currentLine += " ";
-
+            if (!currentLine.empty()) currentLine += " ";
             currentLine += word;
             lines.push_back(currentLine);
         }
     } else if (!currentLine.empty()) {
         lines.push_back(currentLine);
     }
-
     return lines;
 }
 
@@ -824,7 +781,7 @@ public:
                     return str;
                 };
 
-                auto linesTR = splitTextGlobal(item.translated, 45);
+                auto linesTR = splitTextGlobal(item.translated, 30);
                 auto linesJP = splitTextGlobal(item.word.text, 30);
                 
                 u16 itemHeight = (linesTR.size() * 25) + (linesJP.size() * 20) + 20;
