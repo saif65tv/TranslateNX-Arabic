@@ -78,9 +78,99 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
 
     std::vector<std::string> linesToTranslate;
     std::vector<OcrWord> filteredWords;
-    for (const auto& w : ocr.words) {
-        linesToTranslate.push_back(w.text);
-        filteredWords.push_back(w);
+
+    if (g_config.translateApi == TranslateApi::DeepL) {
+        auto endsSentence = [](const std::string& text) -> bool {
+            size_t end = text.size();
+
+            while (end > 0) {
+                const unsigned char c =
+                    static_cast<unsigned char>(text[end - 1]);
+
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+                    --end;
+                    continue;
+                }
+
+                if (c == '\"' || c == '\'' || c == ')' ||
+                    c == ']' || c == '}') {
+                    --end;
+                    continue;
+                }
+
+                break;
+            }
+
+            if (end == 0)
+                return false;
+
+            const unsigned char c =
+                static_cast<unsigned char>(text[end - 1]);
+
+            return c == '.' || c == '!' || c == '?';
+        };
+
+        auto sameTextRegion = [](const OcrWord& a, const OcrWord& b) -> bool {
+            const float aBottom = a.y + a.h;
+            const float verticalGap = b.y - aBottom;
+            const float referenceHeight = std::max(1.0f, std::max(a.h, b.h));
+
+            if (verticalGap > referenceHeight * 1.8f)
+                return false;
+
+            const float aRight = a.x + a.w;
+            const float bRight = b.x + b.w;
+            const float horizontalDistance =
+                (b.x > aRight) ? (b.x - aRight) :
+                (a.x > bRight) ? (a.x - bRight) :
+                0.0f;
+
+            const float maxHorizontalGap =
+                std::max(40.0f, referenceHeight * 6.0f);
+
+            return horizontalDistance <= maxHorizontalGap;
+        };
+
+        OcrWord current{};
+        bool haveCurrent = false;
+
+        for (const auto& w : ocr.words) {
+            if (w.text.empty())
+                continue;
+
+            if (!haveCurrent) {
+                current = w;
+                haveCurrent = true;
+                continue;
+            }
+
+            if (endsSentence(current.text) || !sameTextRegion(current, w)) {
+                filteredWords.push_back(current);
+                linesToTranslate.push_back(current.text);
+                current = w;
+                continue;
+            }
+
+            current.text += " ";
+            current.text += w.text;
+
+            const float right = std::max(current.x + current.w, w.x + w.w);
+            const float bottom = std::max(current.y + current.h, w.y + w.h);
+            current.x = std::min(current.x, w.x);
+            current.y = std::min(current.y, w.y);
+            current.w = right - current.x;
+            current.h = bottom - current.y;
+        }
+
+        if (haveCurrent) {
+            filteredWords.push_back(current);
+            linesToTranslate.push_back(current.text);
+        }
+    } else {
+        for (const auto& w : ocr.words) {
+            linesToTranslate.push_back(w.text);
+            filteredWords.push_back(w);
+        }
     }
 
     TranslateResult tr;
