@@ -38,6 +38,247 @@ class SettingsGui;
 class OnScreenOverlayGui;
 
 void reloadOverlay();
+// ============================================================
+// Translation blocks
+//
+// OCR lines are kept intact, but several consecutive lines that
+// clearly belong to the same text region are translated as ONE
+// unit. This avoids the invalid 1:1 mapping:
+//
+// OCR line 1 -> translation 1
+// OCR line 2 -> translation 2
+//
+// Arabic translations are free to reorder/reflow internally.
+// ============================================================
+
+struct TranslationBlock {
+    std::vector<OcrWord> sourceLines;
+    std::string sourceText;
+    OcrWord anchor;
+};
+
+static bool tbEndsSentence(const std::string& s) {
+    if (s.empty())
+        return false;
+
+    size_t i = s.size();
+
+    while (i > 0) {
+        unsigned char c = static_cast<unsigned char>(s[i - 1]);
+
+        if (c == ' ' || c == '\t' || c == '"' || c == '\'' ||
+            c == ')' || c == ']' || c == '}' ||
+            c == '»' || c == '”') {
+            --i;
+            continue;
+        }
+
+        break;
+    }
+
+    if (i == 0)
+        return false;
+
+    char c = s[i - 1];
+
+    return c == '.' ||
+           c == '!' ||
+           c == '?' ||
+           c == ':' ||
+           c == ';' ||
+           c == '\n';
+}
+
+static bool tbLooksLikeContinuation(const std::string& s) {
+    if (s.empty())
+        return false;
+
+    for (unsigned char c : s) {
+        if (c == ' ' || c == '\t' ||
+            c == '"' || c == '\'' ||
+            c == '(' || c == '[')
+            continue;
+
+        // lowercase ASCII strongly suggests continuation
+        if (c >= 'a' && c <= 'z')
+            return true;
+
+        break;
+    }
+
+    return false;
+}
+
+static std::string tbJoinSource(
+    const std::vector<OcrWord>& lines
+) {
+    std::string result;
+
+    for (const auto& line : lines) {
+        if (line.text.empty())
+            continue;
+
+        if (!result.empty())
+            result += " ";
+
+        result += line.text;
+    }
+
+    return result;
+}
+
+static OcrWord tbMakeAnchor(
+    const std::vector<OcrWord>& lines
+) {
+    OcrWord anchor{};
+
+    if (lines.empty())
+        return anchor;
+
+    float left   = lines[0].x;
+    float top    = lines[0].y;
+    float right  = lines[0].x + lines[0].w;
+    float bottom = lines[0].y + lines[0].h;
+
+    std::string display;
+
+    for (const auto& line : lines) {
+        left   = std::min(left, line.x);
+        top    = std::min(top, line.y);
+        right  = std::max(right, line.x + line.w);
+        bottom = std::max(bottom, line.y + line.h);
+
+        if (!line.text.empty()) {
+            if (!display.empty())
+                display += "\n";
+            display += line.text;
+        }
+    }
+
+    anchor.x = left;
+    anchor.y = top;
+    anchor.w = std::max(0.0f, right - left);
+    anchor.h = std::max(0.0f, bottom - top);
+    anchor.text = display;
+
+    return anchor;
+}
+
+static bool tbShouldJoin(
+    const OcrWord& previous,
+    const OcrWord& current,
+    size_t currentLineCount,
+    size_t currentCharCount
+) {
+    if (previous.text.empty() || current.text.empty())
+        return false;
+
+    // Never make absurdly large translation requests.
+    if (currentLineCount >= 8)
+        return false;
+
+    if (currentCharCount + current.text.size() > 900)
+        return false;
+
+    const float previousBottom = previous.y + previous.h;
+
+    float verticalGap = current.y - previousBottom;
+
+    if (verticalGap < 0.0f)
+        verticalGap = 0.0f;
+
+    const float lineHeight =
+        std::max(0.01f, std::max(previous.h, current.h));
+
+    // They must be genuine adjacent lines.
+    if (verticalGap > std::max(0.035f, lineHeight * 1.55f))
+        return false;
+
+    const float previousRight = previous.x + previous.w;
+    const float currentRight  = current.x + current.w;
+
+    const float overlap =
+        std::max(
+            0.0f,
+            std::min(previousRight, currentRight) -
+            std::max(previous.x, current.x)
+        );
+
+    const float minWidth =
+        std::max(0.01f, std::min(previous.w, current.w));
+
+    const float overlapRatio = overlap / minWidth;
+
+    const float leftDifference =
+        std::abs(previous.x - current.x);
+
+    // Same text column / same region.
+    if (overlapRatio < 0.20f && leftDifference > 0.12f)
+        return false;
+
+    // If previous line clearly finishes a sentence, normally stop.
+    // Exception: OCR can wrap after punctuation before a lowercase
+    // continuation.
+    if (tbEndsSentence(previous.text) &&
+        !tbLooksLikeContinuation(current.text)) {
+        return false;
+    }
+
+    // Two very short neighboring items are more likely labels/buttons.
+    if (previous.text.size() < 12 &&
+        current.text.size() < 12) {
+        return false;
+    }
+
+    return true;
+}
+
+static std::vector<TranslationBlock>
+tbBuildBlocks(const std::vector<OcrWord>& input) {
+
+    std::vector<TranslationBlock> blocks;
+
+    for (const auto& word : input) {
+
+        if (word.text.empty())
+            continue;
+
+        if (blocks.empty()) {
+            TranslationBlock b;
+            b.sourceLines.push_back(word);
+            blocks.push_back(std::move(b));
+            continue;
+        }
+
+        TranslationBlock& last = blocks.back();
+
+        const std::string currentText =
+            tbJoinSource(last.sourceLines);
+
+        if (tbShouldJoin(
+                last.sourceLines.back(),
+                word,
+                last.sourceLines.size(),
+                currentText.size())) {
+
+            last.sourceLines.push_back(word);
+
+        } else {
+
+            TranslationBlock b;
+            b.sourceLines.push_back(word);
+            blocks.push_back(std::move(b));
+        }
+    }
+
+    for (auto& block : blocks) {
+        block.sourceText = tbJoinSource(block.sourceLines);
+        block.anchor = tbMakeAnchor(block.sourceLines);
+    }
+
+    return blocks;
+}
+
 
 // ─── Arka planda çeviri yap ────────────────────────────────────────────────
 static void doTranslate(std::vector<uint8_t> jpegData) {
@@ -76,101 +317,31 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         return;
     }
 
+    // IMPORTANT:
+    // OCR lines are not translation units.
+    // Build linguistic blocks while preserving every original
+    // OCR line and its geometry.
+
+    const auto translationBlocks =
+        tbBuildBlocks(ocr.words);
+
     std::vector<std::string> linesToTranslate;
     std::vector<OcrWord> filteredWords;
 
-    if (g_config.translateApi == TranslateApi::DeepL) {
-        auto endsSentence = [](const std::string& text) -> bool {
-            size_t end = text.size();
+    linesToTranslate.reserve(translationBlocks.size());
+    filteredWords.reserve(translationBlocks.size());
 
-            while (end > 0) {
-                const unsigned char c =
-                    static_cast<unsigned char>(text[end - 1]);
+    for (const auto& block : translationBlocks) {
 
-                if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-                    --end;
-                    continue;
-                }
+        if (block.sourceText.empty())
+            continue;
 
-                if (c == '\"' || c == '\'' || c == ')' ||
-                    c == ']' || c == '}') {
-                    --end;
-                    continue;
-                }
+        // One translator item per logical text block.
+        linesToTranslate.push_back(block.sourceText);
 
-                break;
-            }
-
-            if (end == 0)
-                return false;
-
-            const unsigned char c =
-                static_cast<unsigned char>(text[end - 1]);
-
-            return c == '.' || c == '!' || c == '?';
-        };
-
-        auto sameTextRegion = [](const OcrWord& a, const OcrWord& b) -> bool {
-            const float aBottom = a.y + a.h;
-            const float verticalGap = b.y - aBottom;
-            const float referenceHeight = std::max(1.0f, std::max(a.h, b.h));
-
-            if (verticalGap > referenceHeight * 1.8f)
-                return false;
-
-            const float aRight = a.x + a.w;
-            const float bRight = b.x + b.w;
-            const float horizontalDistance =
-                (b.x > aRight) ? (b.x - aRight) :
-                (a.x > bRight) ? (a.x - bRight) :
-                0.0f;
-
-            const float maxHorizontalGap =
-                std::max(40.0f, referenceHeight * 6.0f);
-
-            return horizontalDistance <= maxHorizontalGap;
-        };
-
-        OcrWord current{};
-        bool haveCurrent = false;
-
-        for (const auto& w : ocr.words) {
-            if (w.text.empty())
-                continue;
-
-            if (!haveCurrent) {
-                current = w;
-                haveCurrent = true;
-                continue;
-            }
-
-            if (endsSentence(current.text) || !sameTextRegion(current, w)) {
-                filteredWords.push_back(current);
-                linesToTranslate.push_back(current.text);
-                current = w;
-                continue;
-            }
-
-            current.text += " ";
-            current.text += w.text;
-
-            const float right = std::max(current.x + current.w, w.x + w.w);
-            const float bottom = std::max(current.y + current.h, w.y + w.h);
-            current.x = std::min(current.x, w.x);
-            current.y = std::min(current.y, w.y);
-            current.w = right - current.x;
-            current.h = bottom - current.y;
-        }
-
-        if (haveCurrent) {
-            filteredWords.push_back(current);
-            linesToTranslate.push_back(current.text);
-        }
-    } else {
-        for (const auto& w : ocr.words) {
-            linesToTranslate.push_back(w.text);
-            filteredWords.push_back(w);
-        }
+        // One UI item per translation block.
+        // The anchor still contains all original OCR lines.
+        filteredWords.push_back(block.anchor);
     }
 
     TranslateResult tr;
