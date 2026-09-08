@@ -4021,32 +4021,89 @@ namespace tsl {
                 
                 /* TRANSLATENX ARABIC HARFBUZZ PATH */
                 if (tsl::ArabicHarfBuzz::containsArabic(text->c_str())) {
-                    std::vector<tsl::ArabicHarfBuzz::Glyph> shaped;
+                    const float scale =
+                        stbtt_ScaleForPixelHeight(
+                            &this->m_arabicFont,
+                            static_cast<float>(fontSize)
+                        );
 
-                    if (tsl::ArabicHarfBuzz::shape(text->c_str(), shaped) &&
-                        !shaped.empty()) {
+                    struct ArabicDrawGlyph {
+                        u8* bitmap = nullptr;
+                        int width = 0;
+                        int height = 0;
+                        int xoff = 0;
+                        int yoff = 0;
+                        float advance = 0.0f;
+                        float xOffset = 0.0f;
+                        float yOffset = 0.0f;
+                    };
 
-                        const float scale =
-                            stbtt_ScaleForPixelHeight(
-                                &this->m_arabicFont,
-                                static_cast<float>(fontSize)
+                    std::vector<std::string> words;
+                    std::string currentWord;
+
+                    for (const char* pText = text->c_str(); ; ++pText) {
+                        const char c = *pText;
+
+                        if (c == ' ' || c == '\0') {
+                            if (!currentWord.empty()) {
+                                words.push_back(currentWord);
+                                currentWord.clear();
+                            }
+
+                            if (c == '\0')
+                                break;
+
+                            continue;
+                        }
+
+                        currentWord.push_back(c);
+                    }
+
+                    if (words.empty())
+                        return {0, static_cast<s32>(fontSize)};
+
+                    int spaceAdvance = 0;
+                    {
+                        int advance = 0;
+                        int lsb = 0;
+
+                        stbtt_GetCodepointHMetrics(
+                            &this->m_arabicFont,
+                            static_cast<int>(' '),
+                            &advance,
+                            &lsb
+                        );
+
+                        spaceAdvance =
+                            static_cast<int>(
+                                std::round(
+                                    static_cast<float>(advance) * scale
+                                )
                             );
+                    }
 
-                        struct ArabicDrawGlyph {
-                            u8* bitmap = nullptr;
-                            int width = 0;
-                            int height = 0;
-                            int xoff = 0;
-                            int yoff = 0;
-                            float advance = 0.0f;
-                            float xOffset = 0.0f;
-                            float yOffset = 0.0f;
-                        };
-
+                    struct ArabicWord {
                         std::vector<ArabicDrawGlyph> glyphs;
-                        glyphs.reserve(shaped.size());
+                        float width = 0.0f;
+                    };
 
-                        float totalWidth = 0.0f;
+                    std::vector<ArabicWord> shapedWords;
+                    shapedWords.reserve(words.size());
+
+                    float totalWidth = 0.0f;
+
+                    for (const std::string& word : words) {
+                        std::vector<tsl::ArabicHarfBuzz::Glyph> shaped;
+
+                        if (!tsl::ArabicHarfBuzz::shape(
+                                word.c_str(),
+                                shaped
+                            ) || shaped.empty()) {
+                            continue;
+                        }
+
+                        ArabicWord aw;
+                        aw.glyphs.reserve(shaped.size());
 
                         for (const auto& g : shaped) {
                             ArabicDrawGlyph dg{};
@@ -4064,28 +4121,53 @@ namespace tsl {
 
                             dg.advance =
                                 static_cast<float>(g.xAdvance) * scale;
+
                             dg.xOffset =
                                 static_cast<float>(g.xOffset) * scale;
+
                             dg.yOffset =
                                 static_cast<float>(g.yOffset) * scale;
 
-                            glyphs.push_back(dg);
-                            totalWidth += std::abs(dg.advance);
+                            aw.glyphs.push_back(dg);
+
+                            aw.width += std::abs(dg.advance);
                         }
 
-                        if (maxWidth > 0) {
-                            totalWidth = std::min(
-                                totalWidth,
-                                static_cast<float>(maxWidth)
+                        totalWidth += aw.width;
+                        shapedWords.push_back(std::move(aw));
+                    }
+
+                    if (shapedWords.empty())
+                        return {0, static_cast<s32>(fontSize)};
+
+                    if (shapedWords.size() > 1) {
+                        totalWidth +=
+                            static_cast<float>(
+                                spaceAdvance *
+                                static_cast<int>(shapedWords.size() - 1)
                             );
-                        }
+                    }
 
-                        if (draw) {
-                            // Arabic: render the shaped glyphs in reverse order.
-                            std::reverse(glyphs.begin(), glyphs.end());
-                            float penX = static_cast<float>(x);
+                    const float actualWidth = totalWidth;
 
-                            for (const auto& g : glyphs) {
+                    if (draw) {
+                        /*
+                         * Arabic words are laid out from RIGHT to LEFT.
+                         *
+                         * HarfBuzz already returns each RTL word in the
+                         * proper glyph order. Do NOT reverse the glyph array.
+                         * Use HarfBuzz's signed x_advance directly.
+                         */
+                        float penX =
+                            static_cast<float>(x) + actualWidth;
+
+                        for (size_t wi = 0;
+                             wi < shapedWords.size();
+                             ++wi) {
+
+                            ArabicWord& word = shapedWords[wi];
+
+                            for (const auto& g : word.glyphs) {
                                 const s32 drawX =
                                     static_cast<s32>(
                                         std::round(
@@ -4105,8 +4187,14 @@ namespace tsl {
                                     );
 
                                 if (g.bitmap) {
-                                    for (int py = 0; py < g.height; ++py) {
-                                        for (int px = 0; px < g.width; ++px) {
+                                    for (int py = 0;
+                                         py < g.height;
+                                         ++py) {
+
+                                        for (int px = 0;
+                                             px < g.width;
+                                             ++px) {
+
                                             const u8 alpha4 =
                                                 g.bitmap[
                                                     py * g.width + px
@@ -4115,8 +4203,11 @@ namespace tsl {
                                             if (alpha4 == 0)
                                                 continue;
 
-                                            const s32 outX = drawX + px;
-                                            const s32 outY = drawY + py;
+                                            const s32 outX =
+                                                drawX + px;
+
+                                            const s32 outY =
+                                                drawY + py;
 
                                             if (alpha4 == 0xF) {
                                                 this->setPixel(
@@ -4126,6 +4217,7 @@ namespace tsl {
                                                 );
                                             } else {
                                                 Color blended = defaultColor;
+
                                                 blended.a =
                                                     static_cast<u8>(
                                                         alpha4 *
@@ -4146,11 +4238,23 @@ namespace tsl {
                                     }
                                 }
 
-                                penX += std::abs(g.advance);
+                                /*
+                                 * IMPORTANT:
+                                 * HarfBuzz provides the signed RTL advance.
+                                 * Move the pen using it directly.
+                                 */
+                                penX += g.advance;
+                            }
+
+                            if (wi + 1 < shapedWords.size()) {
+                                penX -=
+                                    static_cast<float>(spaceAdvance);
                             }
                         }
+                    }
 
-                        for (auto& g : glyphs) {
+                    for (auto& word : shapedWords) {
+                        for (auto& g : word.glyphs) {
                             if (g.bitmap) {
                                 stbtt_FreeBitmap(
                                     g.bitmap,
@@ -4159,16 +4263,19 @@ namespace tsl {
                                 g.bitmap = nullptr;
                             }
                         }
-
-                        return {
-                            static_cast<s32>(
-                                std::ceil(
-                                    std::max(0.0f, totalWidth)
-                                )
-                            ),
-                            static_cast<s32>(fontSize)
-                        };
                     }
+
+                    return {
+                        static_cast<s32>(
+                            std::ceil(
+                                std::max(
+                                    0.0f,
+                                    actualWidth
+                                )
+                            )
+                        ),
+                        static_cast<s32>(fontSize)
+                    };
                 }
 
                 const float maxWidthLimit = maxWidth > 0 ? x + maxWidth : std::numeric_limits<float>::max();

@@ -158,57 +158,6 @@ inline bool shape(
             nullptr
         );
 
-    // TRANSLATENX HARFBUZZ DEBUG LOG
-    {
-        static int debugLogCount = 0;
-
-        if (debugLogCount < 20) {
-            FILE* logFile =
-                fopen(
-                    "sd:/switch/translatenx_harfbuzz_debug.txt",
-                    "ab"
-                );
-
-            if (logFile) {
-                fprintf(
-                    logFile,
-                    "\n--- HarfBuzz Shape #%d ---\n",
-                    debugLogCount
-                );
-
-                fprintf(
-                    logFile,
-                    "Input: %s\n",
-                    text ? text : "(null)"
-                );
-
-                fprintf(
-                    logFile,
-                    "Glyph count: %u\n",
-                    count
-                );
-
-                for (unsigned int i = 0; i < count; ++i) {
-                    fprintf(
-                        logFile,
-                        "Index=%u | Cluster=%u | GlyphID=%u | XAdvance=%d | XOffset=%d\n",
-                        i,
-                        infos[i].cluster,
-                        infos[i].codepoint,
-                        positions[i].x_advance,
-                        positions[i].x_offset
-                    );
-                }
-
-                fprintf(logFile, "--- End ---\n");
-                fclose(logFile);
-
-                ++debugLogCount;
-            }
-        }
-    }
-
-
     if (!infos || !positions || count == 0) {
         hb_buffer_destroy(buffer);
         return false;
