@@ -114,10 +114,12 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
         return result;
 }
 
-TranslateResult runDeepL(const std::vector<std::string>& lines,
-                            const std::string& apiKey,
-                            const std::string& sourceLang,
-                            const std::string& targetLang) {
+TranslateResult runDeepL(
+                             const std::vector<std::string>& lines,
+                             const std::string& apiKey,
+                             const std::string& sourceLang,
+                             const std::string& targetLang,
+                             const std::string& context) {
     TranslateResult result;
     if (lines.empty() || apiKey.empty()) {
         result.errorMsg = "DeepL: API key girilmemiş";
@@ -133,6 +135,14 @@ TranslateResult runDeepL(const std::vector<std::string>& lines,
     for (const auto& line : lines) {
         body += "&text=" + urlEncode(line);
     }
+
+    // Full OCR text is context only; it is not translated itself.
+    if (!context.empty()) {
+        body += "&context=" + urlEncode(context);
+    }
+
+    // Keep every OCR item mapped to exactly one translation item.
+    body += "&split_sentences=0";
 
     HttpResponse resp;
     for (int retry = 0; retry < 3; retry++) {

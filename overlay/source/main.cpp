@@ -96,7 +96,13 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         std::transform(deeplSource.begin(), deeplSource.end(), deeplSource.begin(), ::toupper);
         std::string deeplTarget = g_config.dstLang;
         std::transform(deeplTarget.begin(), deeplTarget.end(), deeplTarget.begin(), ::toupper);
-        tr = Translate::runDeepL(linesToTranslate, g_config.deeplApiKey, deeplSource, deeplTarget);
+        tr = Translate::runDeepL(
+            linesToTranslate,
+            g_config.deeplApiKey,
+            deeplSource,
+            deeplTarget,
+            ocr.fullText
+        );
     } else if (g_config.translateApi == TranslateApi::GoogleCloud) {
         if (g_config.googleTransApiKey.empty()) {
             std::lock_guard<std::mutex> lk(g_resultMutex);

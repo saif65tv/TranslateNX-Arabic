@@ -13,10 +13,13 @@ namespace Translate {
     TranslateResult runMyMemory(const std::vector<std::string>& lines,
                             const std::string& langPair = "ja|tr");
 
-    TranslateResult runDeepL(const std::vector<std::string>& lines,
-                               const std::string& apiKey,
-                               const std::string& sourceLang,
-                               const std::string& targetLang);
+    TranslateResult runDeepL(
+        const std::vector<std::string>& lines,
+        const std::string& apiKey,
+        const std::string& sourceLang,
+        const std::string& targetLang,
+        const std::string& context = ""
+    );
 
     TranslateResult runGoogleCloud(const std::vector<std::string>& lines,
                                const std::string& apiKey,
