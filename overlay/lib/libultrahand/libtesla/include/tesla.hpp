@@ -4027,7 +4027,7 @@ namespace tsl {
                         !shaped.empty()) {
 
                         const float scale =
-                            stbtt_ScaleForPixelHeight(
+                            stbtt_ScaleForMappingEmToPixels(
                                 &this->m_arabicFont,
                                 static_cast<float>(fontSize)
                             );
@@ -4070,7 +4070,7 @@ namespace tsl {
                                 static_cast<float>(g.yOffset) * scale;
 
                             glyphs.push_back(dg);
-                            totalWidth += std::abs(dg.advance);
+                            totalWidth += dg.advance;
                         }
 
                         if (maxWidth > 0) {
@@ -4082,7 +4082,7 @@ namespace tsl {
 
                         if (draw) {
                             // Arabic: render the shaped glyphs in reverse order.
-                            std::reverse(glyphs.begin(), glyphs.end());
+                            
                             float penX = static_cast<float>(x);
 
                             for (const auto& g : glyphs) {
@@ -4146,7 +4146,7 @@ namespace tsl {
                                     }
                                 }
 
-                                penX += std::abs(g.advance);
+                                penX += g.advance;
                             }
                         }
 
