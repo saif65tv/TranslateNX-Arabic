@@ -4174,8 +4174,7 @@ namespace tsl {
              * HarfBuzz RTL order is reversed here so that
              * the shaped word appears naturally on screen.
              */
-            for (size_t gi = word.size(); gi-- > 0;) {
-                const auto& g = word[gi];
+            for (const auto& g : word) {
 
                 const s32 drawX =
                     static_cast<s32>(
