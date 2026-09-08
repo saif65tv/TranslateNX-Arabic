@@ -165,6 +165,7 @@ static OcrWord tbMakeAnchor(
 }
 
 
+
 static bool tbShouldJoin(
     const OcrWord& previous,
     const OcrWord& current,
@@ -174,84 +175,67 @@ static bool tbShouldJoin(
     if (previous.text.empty() || current.text.empty())
         return false;
 
-    // Large enough for real dialogue paragraphs, but never the whole screen.
-    if (blockLineCount >= 12)
+    // Keep individual translation requests reasonably sized.
+    if (blockLineCount >= 10)
         return false;
 
-    if (blockCharCount + current.text.size() > 1800)
+    if (blockCharCount + current.text.size() > 1400)
         return false;
 
+    // Vertical adjacency.
     const float previousBottom = previous.y + previous.h;
 
     float verticalGap = current.y - previousBottom;
-
     if (verticalGap < 0.0f)
         verticalGap = 0.0f;
 
     const float lineHeight =
         std::max(0.01f, std::max(previous.h, current.h));
 
-    /*
-     * OCR line spacing varies between games and fonts.
-     * Use a deliberately generous limit here because the OCR engine
-     * already identified these as separate lines.
-     */
-    if (verticalGap > std::max(0.08f, lineHeight * 3.0f))
-        return false;
-
-    const float previousRight = previous.x + previous.w;
-    const float currentRight  = current.x + current.w;
-
-    const float overlap =
-        std::max(
-            0.0f,
-            std::min(previousRight, currentRight) -
-            std::max(previous.x, current.x)
-        );
-
-    const float smallerWidth =
-        std::max(0.01f, std::min(previous.w, current.w));
-
-    const float overlapRatio =
-        overlap / smallerWidth;
-
-    const float previousCenter =
-        previous.x + previous.w * 0.5f;
-
-    const float currentCenter =
-        current.x + current.w * 0.5f;
-
-    const float centerDifference =
-        std::abs(previousCenter - currentCenter);
-
-    /*
-     * Same paragraph usually means:
-     * - substantial horizontal overlap, OR
-     * - nearly the same text-column center.
-     */
-    const bool sameTextColumn =
-        overlapRatio >= 0.10f ||
-        centerDifference <= 0.18f;
-
-    if (!sameTextColumn)
+    // Wrapped dialogue lines are normally very close.
+    if (verticalGap > std::max(0.07f, lineHeight * 3.5f))
         return false;
 
     /*
-     * Avoid combining tiny unrelated UI labels.
-     * Once one of the lines is substantial, allow normal paragraph
-     * continuation freely.
+     * Do not require identical X positions.
+     * OCR line boxes can vary significantly when a paragraph wraps.
      */
-    if (previous.text.size() < 8 &&
-        current.text.size() < 8) {
+    const float leftDifference =
+        std::abs(previous.x - current.x);
+
+    if (leftDifference > 0.22f)
+        return false;
+
+    /*
+     * Important:
+     * Do NOT split at punctuation.
+     *
+     * A translated sentence can span several OCR lines, and the
+     * punctuation of one source line tells us nothing reliable about
+     * whether the next line belongs to the same linguistic unit.
+     */
+
+    /*
+     * Protect short independent UI elements.
+     *
+     * A short line may still be the continuation of an already
+     * substantial paragraph, so once the block is substantial we
+     * allow it to join.
+     */
+    const bool previousSubstantial =
+        previous.text.size() >= 12;
+
+    const bool currentSubstantial =
+        current.text.size() >= 12;
+
+    const bool blockAlreadySubstantial =
+        blockCharCount >= 12;
+
+    if (!previousSubstantial &&
+        !currentSubstantial &&
+        !blockAlreadySubstantial) {
         return false;
     }
-
-    /*
-     * IMPORTANT:
-     * Do NOT split at '.', '!', '?' etc.
-     * A visual OCR line can end in punctuation while the next
-     * visual line is still part of the same translation unit.
-     */
 
     return true;
 }
