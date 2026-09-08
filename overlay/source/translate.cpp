@@ -114,6 +114,101 @@ TranslateResult runMyMemory(const std::vector<std::string>& lines, const std::st
         return result;
 }
 
+
+static std::string xmlEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 32);
+
+    for (char c : s) {
+        switch (c) {
+            case '&': out += "&amp;";  break;
+            case '<': out += "&lt;";   break;
+            case '>': out += "&gt;";   break;
+            case '"': out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default: out += c; break;
+        }
+    }
+
+    return out;
+}
+
+static std::string xmlUnescape(const std::string& s) {
+    std::string out = s;
+
+    auto replaceAll = [&out](const std::string& from, const std::string& to) {
+        size_t pos = 0;
+        while ((pos = out.find(from, pos)) != std::string::npos) {
+            out.replace(pos, from.length(), to);
+            pos += to.length();
+        }
+    };
+
+    replaceAll("&lt;", "<");
+    replaceAll("&gt;", ">");
+    replaceAll("&quot;", "\"");
+    replaceAll("&apos;", "'");
+    replaceAll("&amp;", "&");
+
+    return out;
+}
+
+static bool deepLEndsSentence(const std::string& text) {
+    if (text.empty())
+        return false;
+
+    size_t end = text.size();
+
+    while (end > 0 &&
+           (text[end - 1] == ' ' ||
+            text[end - 1] == '\t' ||
+            text[end - 1] == '\r' ||
+            text[end - 1] == '\n')) {
+        --end;
+    }
+
+    if (end == 0)
+        return false;
+
+    const char c = text[end - 1];
+
+    return c == '.' ||
+           c == '!' ||
+           c == '?' ||
+           c == ':' ||
+           c == ';';
+}
+
+static bool parseDeepLTaggedText(
+    const std::string& translated,
+    std::vector<std::string>& out
+) {
+    size_t pos = 0;
+
+    while (true) {
+        const size_t open = translated.find("<line", pos);
+        if (open == std::string::npos)
+            break;
+
+        const size_t openEnd = translated.find('>', open);
+        if (openEnd == std::string::npos)
+            return false;
+
+        const size_t close = translated.find("</line>", openEnd + 1);
+        if (close == std::string::npos)
+            return false;
+
+        std::string value =
+            translated.substr(openEnd + 1, close - (openEnd + 1));
+
+        out.push_back(xmlUnescape(value));
+
+        pos = close + 7;
+    }
+
+    return !out.empty();
+}
+
 TranslateResult runDeepL(
                              const std::vector<std::string>& lines,
                              const std::string& apiKey,
@@ -121,30 +216,77 @@ TranslateResult runDeepL(
                              const std::string& targetLang,
                              const std::string& context) {
     TranslateResult result;
+
     if (lines.empty() || apiKey.empty()) {
         result.errorMsg = "DeepL: API key girilmemiş";
-        for (auto& line : result.translatedLines) {
-        }
         return result;
     }
 
-    std::string body = "target_lang=" + targetLang;
+    /*
+     * Group OCR lines into sentence-sized translation blocks.
+     *
+     * The UI still receives exactly one translation per original OCR line.
+     * DeepL, however, sees related lines together inside the same text item.
+     *
+     * Example:
+     *   Line 0: New roads that were under construction had to
+     *   Line 1: be abandoned, and Ichiru Manor was buried
+     *   Line 2: under a slew of rock, resulting in numerous
+     *   Line 3: fatalities.
+     *
+     * These are sent together, with XML tags preserving the four outputs.
+     */
+    std::vector<std::string> blocks;
+    std::string currentBlock;
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const std::string& line = lines[i];
+
+        if (!currentBlock.empty())
+            currentBlock += " ";
+
+        currentBlock +=
+            "<line id=\"" +
+            std::to_string(i) +
+            "\">" +
+            xmlEscape(line) +
+            "</line>";
+
+        if (deepLEndsSentence(line) || currentBlock.size() > 1800) {
+            blocks.push_back(currentBlock);
+            currentBlock.clear();
+        }
+    }
+
+    if (!currentBlock.empty())
+        blocks.push_back(currentBlock);
+
+    std::string body =
+        "target_lang=" + targetLang;
+
     if (!sourceLang.empty()) {
         body += "&source_lang=" + sourceLang;
     }
-    for (const auto& line : lines) {
-        body += "&text=" + urlEncode(line);
+
+    /*
+     * Each block is one DeepL text item.
+     * XML tags are used only to preserve the original OCR item mapping.
+     */
+    for (const auto& block : blocks) {
+        body += "&text=" + urlEncode(block);
     }
 
-    // Full OCR text is context only; it is not translated itself.
     if (!context.empty()) {
         body += "&context=" + urlEncode(context);
     }
 
-    // Keep every OCR item mapped to exactly one translation item.
-    body += "&split_sentences=0";
+    body += "&split_sentences=1";
+    body += "&tag_handling=xml";
+    body += "&tag_handling_version=v2";
+    body += "&non_splitting_tags=line";
 
     HttpResponse resp;
+
     for (int retry = 0; retry < 3; retry++) {
         resp = HttpClient::post(
             "https://api-free.deepl.com/v2/translate",
@@ -154,71 +296,105 @@ TranslateResult runDeepL(
                 "Content-Type: application/x-www-form-urlencoded"
             }
         );
-        if (resp.ok()) {
+
+        if (resp.ok())
             break;
-        }
-        svcSleepThread(1000000000ull); // 1 saniye bekle
+
+        svcSleepThread(1000000000ull);
     }
 
     if (!resp.ok()) {
         if (resp.statusCode == 0) {
-            result.errorMsg = "DeepL: Bağlantı kurulamadı — " + resp.errorStr;
+            result.errorMsg =
+                "DeepL: Bağlantı kurulamadı — " + resp.errorStr;
         } else if (resp.statusCode == 400) {
-            result.errorMsg = "DeepL: Geçersiz istek (HTTP 400) — dil kodu yanlış olabilir";
+            result.errorMsg =
+                "DeepL: Geçersiz istek (HTTP 400)";
         } else if (resp.statusCode == 403) {
-            result.errorMsg = "DeepL: Geçersiz API key (HTTP 403) — ücretsiz key mi, yoksa PRO mu?";
+            result.errorMsg =
+                "DeepL: Geçersiz API key (HTTP 403)";
         } else if (resp.statusCode == 413) {
-            result.errorMsg = "DeepL: Metin çok büyük (HTTP 413) — daha az metin gönderin";
+            result.errorMsg =
+                "DeepL: Metin çok büyük (HTTP 413)";
         } else if (resp.statusCode == 429) {
-            result.errorMsg = "DeepL: İstek oran sınırı aşıldı (HTTP 429) — biraz bekleyip tekrar deneyin";
+            result.errorMsg =
+                "DeepL: İstek oran sınırı aşıldı (HTTP 429)";
         } else if (resp.statusCode == 456) {
-            result.errorMsg = "DeepL: Aylık karakter kotası doldu (HTTP 456) — plan yenileme tarihinizi kontrol edin";
-        } else if (resp.statusCode == 500) {
-            result.errorMsg = "DeepL: Sunucu hatası (HTTP 500) — daha sonra tekrar deneyin";
-        } else if (resp.statusCode == 503) {
-            result.errorMsg = "DeepL: Servis geçici olarak kullanılamıyor (HTTP 503) — daha sonra tekrar deneyin";
-        } else if (resp.statusCode == 529) {
-            result.errorMsg = "DeepL: Sunucu aşırı yüklendi (HTTP 529) — dakika sonra tekrar deneyin";
+            result.errorMsg =
+                "DeepL: Aylık karakter kotası doldu (HTTP 456)";
         } else {
-            result.errorMsg = "DeepL: HTTP " + std::to_string(resp.statusCode);
+            result.errorMsg =
+                "DeepL: HTTP " + std::to_string(resp.statusCode);
         }
-        for (auto& line : result.translatedLines) {
-        }
+
         return result;
     }
 
-    // DeepL JSON: {"translations":[{"detected_source_language":"EN","text":"Tr1"}, {"text":"Tr2"}]}
-    // Biz cJSON ile tüm text alanlarını toplayacağız.
     cJSON* root = cJSON_Parse(resp.body.c_str());
-    if (root) {
-        cJSON* translations = cJSON_GetObjectItem(root, "translations");
-        if (cJSON_IsArray(translations)) {
-            int count = cJSON_GetArraySize(translations);
-            for (int i = 0; i < count; ++i) {
-                cJSON* tr = cJSON_GetArrayItem(translations, i);
-                cJSON* txt = cJSON_GetObjectItem(tr, "text");
-                if (txt && cJSON_IsString(txt)) {
-                    result.translatedLines.push_back(txt->valuestring);
-                    result.translatedText += std::string(txt->valuestring) + "\n";
-                }
-            }
-        }
-        cJSON_Delete(root);
+
+    if (!root) {
+        result.errorMsg = "DeepL: JSON yanıtı çözülemedi";
+        return result;
     }
 
-    if (result.translatedLines.empty()) {
-        result.errorMsg = "DeepL: Boş yanıt döndü — API key doğru mu?";
-        for (auto& line : result.translatedLines) {
+    cJSON* translations =
+        cJSON_GetObjectItem(root, "translations");
+
+    if (!cJSON_IsArray(translations)) {
+        cJSON_Delete(root);
+        result.errorMsg = "DeepL: translations alanı bulunamadı";
+        return result;
+    }
+
+    const int count = cJSON_GetArraySize(translations);
+
+    for (int i = 0; i < count; ++i) {
+        cJSON* tr =
+            cJSON_GetArrayItem(translations, i);
+
+        cJSON* txt =
+            cJSON_GetObjectItem(tr, "text");
+
+        if (!txt || !cJSON_IsString(txt)) {
+            cJSON_Delete(root);
+            result.translatedLines.clear();
+            result.errorMsg =
+                "DeepL: ترجمة غير صالحة من الخادم";
+            return result;
         }
+
+        std::vector<std::string> blockTranslations;
+
+        if (!parseDeepLTaggedText(
+                txt->valuestring,
+                blockTranslations)) {
+
+            cJSON_Delete(root);
+            result.translatedLines.clear();
+            result.errorMsg =
+                "DeepL: تعذر استرجاع ترجمة أسطر OCR";
+            return result;
+        }
+
+        for (const auto& translated : blockTranslations) {
+            result.translatedLines.push_back(translated);
+            result.translatedText += translated + "\n";
+        }
+    }
+
+    cJSON_Delete(root);
+
+    if (result.translatedLines.size() != lines.size()) {
+        result.translatedLines.clear();
+        result.translatedText.clear();
+        result.errorMsg =
+            "DeepL: عدد الترجمات لا يطابق عدد أسطر OCR";
         return result;
     }
 
     result.success = true;
-        for (auto& line : result.translatedLines) {
-        }
-        return result;
+    return result;
 }
-
 
 // ─── Google Cloud Translation API ─────────────────────────────────────────
 TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std::string& apiKey, const std::string& sourceLang, const std::string& targetLang) {
