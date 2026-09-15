@@ -2,7 +2,7 @@ name: Build Switch Overlay
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, ai-new-base ]
   workflow_dispatch:
 
 jobs:
