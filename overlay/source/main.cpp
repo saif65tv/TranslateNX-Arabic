@@ -1252,7 +1252,7 @@ static std::vector<std::string> wrapHudText(
     return lines;
 }
 
-static void* geminiTranslateThread(void* arg) {
+static void geminiTranslateThread(void* arg) {
     auto* jpegData =
         static_cast<std::vector<uint8_t>*>(arg);
 
@@ -1262,7 +1262,6 @@ static void* geminiTranslateThread(void* arg) {
     }
 
     g_aiThreadRunning.store(false, std::memory_order_release);
-    return nullptr;
 }
 
 class GeminiHudGui : public tsl::Gui {
@@ -1539,6 +1538,7 @@ public:
     void exitServices() override {
         if (g_aiThreadCreated.load(std::memory_order_acquire)) {
             threadWaitForExit(&g_aiThread);
+            threadClose(&g_aiThread);
             g_aiThreadCreated.store(false, std::memory_order_release);
             g_aiThreadRunning.store(false, std::memory_order_release);
         }
@@ -1553,7 +1553,7 @@ public:
 
         // Direct "translate" launch:
         // no settings/menu, start Gemini HUD directly.
-        if (ult::lastOverlayMode == "translate") {
+        if (lastOverlayMode == "translate") {
             return initially<GeminiHudGui>();
         }
 
