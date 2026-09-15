@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <cstdint>
 
 struct TranslateResult {
     bool        success = false;
@@ -22,4 +23,8 @@ namespace Translate {
                                const std::string& apiKey,
                                const std::string& sourceLang,
                                const std::string& targetLang);
+
+    TranslateResult runGeminiAI(const std::vector<uint8_t>& jpegData,
+                                const std::string& apiKey,
+                                const std::string& targetLang);
 }

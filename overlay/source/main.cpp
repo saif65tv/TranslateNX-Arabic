@@ -56,6 +56,56 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         return;
     }
 
+    // AI Mode: Gemini reads and translates the screenshot directly.
+    if (g_config.appMode == AppMode::AI) {
+        if (g_config.aiApi != AiApi::Gemini) {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_errorText =
+                L("AI Hatası: Şu an yalnızca Gemini AI bağlıdır",
+                  "AI Error: Gemini AI is currently connected");
+            g_translating = false;
+            return;
+        }
+
+        if (g_config.geminiApiKey.empty()) {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_errorText =
+                L("AI Hatası: Gemini API key girilmemiş",
+                  "AI Error: Gemini API key is missing");
+            g_translating = false;
+            return;
+        }
+
+        TranslateResult aiResult =
+            Translate::runGeminiAI(jpegData, g_config.geminiApiKey, g_config.dstLang);
+
+        std::lock_guard<std::mutex> lk(g_resultMutex);
+
+        OcrWord aiAnchor{};
+        aiAnchor.x = 0.05f;
+        aiAnchor.y = 0.40f;
+        aiAnchor.w = 0.90f;
+        aiAnchor.h = 0.20f;
+        aiAnchor.text = aiResult.translatedText.empty()
+            ? L("AI Çevirisi", "AI Translation")
+            : aiResult.translatedText;
+
+        g_ocrWords.clear();
+        g_translatedLines.clear();
+        g_originalText.clear();
+
+        if (aiResult.success) {
+            g_ocrWords.push_back(aiAnchor);
+            g_translatedLines.push_back(aiResult.translatedText);
+            g_errorText.clear();
+        } else {
+            g_errorText = aiResult.errorMsg;
+        }
+
+        g_translating = false;
+        return;
+    }
+
     OcrResult ocr;
     if (g_config.ocrApi == OcrApi::GoogleVision) {
         if (g_config.visionApiKey.empty()) {
@@ -150,6 +200,84 @@ std::string getLanguageName(const std::string& code) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SAYFA 4: Dil Seçimi
 // ═══════════════════════════════════════════════════════════════════════════
+class AiApiSelectGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("AI API Seçimi", "AI API Select"),
+            L("[B] Geri", "[B] Back")
+        );
+
+        auto* list = new tsl::elm::List();
+
+        auto* puter = new tsl::elm::ListItem("Puter AI");
+        puter->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                g_config.aiApi = AiApi::Puter;
+                ConfigManager::save(g_config);
+                tsl::goBack();
+                return true;
+            }
+            return false;
+        });
+        list->addItem(puter);
+
+        auto* gemini = new tsl::elm::ListItem("Gemini AI");
+        gemini->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                g_config.aiApi = AiApi::Gemini;
+                ConfigManager::save(g_config);
+                tsl::goBack();
+                return true;
+            }
+            return false;
+        });
+        list->addItem(gemini);
+
+        frame->setContent(list);
+        return frame;
+    }
+};
+
+class AppModeSelectGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("Çeviri Modu", "Translation Mode"),
+            L("[B] Geri", "[B] Back")
+        );
+
+        auto* list = new tsl::elm::List();
+
+        auto* classic = new tsl::elm::ListItem("Classic Mode");
+        classic->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                g_config.appMode = AppMode::Classic;
+                ConfigManager::save(g_config);
+                tsl::goBack();
+                return true;
+            }
+            return false;
+        });
+        list->addItem(classic);
+
+        auto* ai = new tsl::elm::ListItem("AI Mode");
+        ai->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                g_config.appMode = AppMode::AI;
+                ConfigManager::save(g_config);
+                tsl::goBack();
+                return true;
+            }
+            return false;
+        });
+        list->addItem(ai);
+
+        frame->setContent(list);
+        return frame;
+    }
+};
+
 class OcrApiSelectGui : public tsl::Gui {
 public:
     tsl::elm::Element* createUI() override {
@@ -293,6 +421,7 @@ public:
 class HelpGui;
 
 class SettingsGui : public tsl::Gui {
+    tsl::elm::ListItem* m_modeItem = nullptr;
     tsl::elm::ListItem* m_ocrApiItem = nullptr;
     tsl::elm::ListItem* m_transApiItem = nullptr;
     tsl::elm::ListItem* m_srcItem = nullptr;
@@ -300,6 +429,12 @@ class SettingsGui : public tsl::Gui {
     tsl::elm::ListItem* m_uiLangItem = nullptr;
 
     void update() override {
+        if (m_modeItem) {
+            m_modeItem->setValue(
+                g_config.appMode == AppMode::AI ? "AI Mode" : "Classic Mode"
+            );
+        }
+
         if (m_srcItem) m_srcItem->setValue(getLanguageName(g_config.srcLang));
         if (m_dstItem) m_dstItem->setValue(getLanguageName(g_config.dstLang));
         if (m_uiLangItem) m_uiLangItem->setValue(g_config.uiLang == "EN" ? "English" : "Türkçe");
@@ -319,6 +454,42 @@ public:
     tsl::elm::Element* createUI() override {
         auto* frame = new tsl::elm::OverlayFrame(L("Ayarlar", "Settings"), L("[B] Geri", "[B] Back"));
         auto* list  = new tsl::elm::List();
+
+        list->addItem(new tsl::elm::CategoryHeader(L("MODE AYARLARI", "MODE SETTINGS")));
+
+        m_modeItem = new tsl::elm::ListItem(
+            L("Çeviri Modu", "Translation Mode")
+        );
+
+        m_modeItem->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                tsl::changeTo<AppModeSelectGui>();
+                return true;
+            }
+            return false;
+        });
+
+        list->addItem(m_modeItem);
+
+        if (g_config.appMode == AppMode::AI) {
+            auto* aiApiItem = new tsl::elm::ListItem(
+                L("AI Sağlayıcı", "AI Provider")
+            );
+
+            aiApiItem->setValue(
+                g_config.aiApi == AiApi::Puter ? "Puter AI" : "Gemini AI"
+            );
+
+            aiApiItem->setClickListener([](u64 keys) -> bool {
+                if (keys & HidNpadButton_A) {
+                    tsl::changeTo<AiApiSelectGui>();
+                    return true;
+                }
+                return false;
+            });
+
+            list->addItem(aiApiItem);
+        }
 
         list->addItem(new tsl::elm::CategoryHeader(L("API AYARLARI", "API SETTINGS")));
 

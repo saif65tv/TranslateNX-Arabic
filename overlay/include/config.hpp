@@ -12,28 +12,38 @@ enum class TranslateApi {
     GoogleCloud
 };
 
-struct Config {
-    OcrApi        ocrApi       = OcrApi::OcrSpace;
-    TranslateApi  translateApi = TranslateApi::MyMemory;
-    std::string   srcLang      = "ja";      // kaynak dil (ja, en, ...)
-    std::string   dstLang      = "tr";      // hedef dil
-    std::string   uiLang       = "tr";      // arayüz dili (tr, en)
-    
-    std::string   ocrApiKey;                // OCR.space
-    std::string   visionApiKey;             // Google Vision
-    
-    std::string   deeplApiKey;              // DeepL
-    std::string   googleTransApiKey;        // Google Cloud Translate
+enum class AppMode {
+    Classic,
+    AI
 };
 
-// SD:/config/translate/config.ini
+enum class AiApi {
+    Puter,
+    Gemini
+};
+
+struct Config {
+    AppMode       appMode      = AppMode::Classic;
+    AiApi         aiApi        = AiApi::Gemini;
+
+    OcrApi        ocrApi       = OcrApi::OcrSpace;
+    TranslateApi  translateApi = TranslateApi::MyMemory;
+
+    std::string   srcLang = "ja";
+    std::string   dstLang = "tr";
+    std::string   uiLang = "tr";
+
+    std::string   ocrApiKey;
+    std::string   visionApiKey;
+    std::string   deeplApiKey;
+    std::string   googleTransApiKey;
+
+    std::string   puterApiKey;
+    std::string   geminiApiKey;
+};
+
 namespace ConfigManager {
     Config load();
-    void   save(const Config& cfg);
-
-    // Switch'in kendi sanal klavyesini açar, kullanıcıdan string alır
-    // title: Klavye üstünde gösterilecek başlık
-    // out:   Kullanıcının girdiği string (çıktı)
-    // Dönüş: true → kullanıcı OK'ladı, false → iptal
+    void save(const Config& cfg);
     bool promptKeyboard(const char* title, std::string& out);
 }

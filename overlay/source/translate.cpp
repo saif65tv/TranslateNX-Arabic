@@ -288,4 +288,186 @@ TranslateResult runGoogleCloud(const std::vector<std::string>& lines, const std:
     return result;
 }
 
+static std::string encodeBase64(const std::vector<uint8_t>& data) {
+    static const char* chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+
+    for (size_t i = 0; i < data.size(); i += 3) {
+        uint32_t value = static_cast<uint32_t>(data[i]) << 16;
+
+        if (i + 1 < data.size())
+            value |= static_cast<uint32_t>(data[i + 1]) << 8;
+
+        if (i + 2 < data.size())
+            value |= static_cast<uint32_t>(data[i + 2]);
+
+        out += chars[(value >> 18) & 0x3F];
+        out += chars[(value >> 12) & 0x3F];
+        out += (i + 1 < data.size()) ? chars[(value >> 6) & 0x3F] : '=';
+        out += (i + 2 < data.size()) ? chars[value & 0x3F] : '=';
+    }
+
+    return out;
+}
+
+TranslateResult runGeminiAI(
+    const std::vector<uint8_t>& jpegData,
+    const std::string& apiKey,
+    const std::string& targetLang
+) {
+    TranslateResult result;
+
+    if (jpegData.empty()) {
+        result.errorMsg = "Gemini AI: JPEG data is empty";
+        return result;
+    }
+
+    if (apiKey.empty()) {
+        result.errorMsg = "Gemini AI: API key is missing";
+        return result;
+    }
+
+    std::string image64 = encodeBase64(jpegData);
+
+    std::string prompt =
+        "Please extract all visible text from this image and translate it to " +
+        targetLang +
+        ". Preserve the meaning and natural context of the original text. "
+        "Return ONLY a raw JSON object with no markdown formatting, "
+        "containing exactly two keys: \"original\" (the extracted text) "
+        "and \"translated\" (the translation).";
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* contents = cJSON_CreateArray();
+    cJSON* content = cJSON_CreateObject();
+    cJSON* parts = cJSON_CreateArray();
+
+    cJSON* textPart = cJSON_CreateObject();
+    cJSON_AddStringToObject(textPart, "text", prompt.c_str());
+    cJSON_AddItemToArray(parts, textPart);
+
+    cJSON* imagePart = cJSON_CreateObject();
+    cJSON* inlineData = cJSON_CreateObject();
+    cJSON_AddStringToObject(inlineData, "mime_type", "image/jpeg");
+    cJSON_AddStringToObject(inlineData, "data", image64.c_str());
+    cJSON_AddItemToObject(imagePart, "inline_data", inlineData);
+    cJSON_AddItemToArray(parts, imagePart);
+
+    cJSON_AddItemToObject(content, "parts", parts);
+    cJSON_AddItemToArray(contents, content);
+    cJSON_AddItemToObject(root, "contents", contents);
+
+    char* json = cJSON_PrintUnformatted(root);
+    std::string body(json ? json : "");
+    if (json)
+        free(json);
+    cJSON_Delete(root);
+
+    std::string url =
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-3.1-flash-lite:generateContent?key=" + apiKey;
+
+    HttpResponse resp;
+
+    for (int retry = 0; retry < 3; ++retry) {
+        resp = HttpClient::post(
+            url,
+            body,
+            {"Content-Type: application/json"}
+        );
+
+        if (resp.ok())
+            break;
+
+        svcSleepThread(1000000000ull);
+    }
+
+    if (!resp.ok()) {
+        if (resp.statusCode == 0) {
+            result.errorMsg =
+                "Gemini AI: Connection failed — " + resp.errorStr;
+        } else {
+            result.errorMsg =
+                "Gemini AI: HTTP " + std::to_string(resp.statusCode);
+        }
+        return result;
+    }
+
+    cJSON* responseRoot = cJSON_Parse(resp.body.c_str());
+    if (!responseRoot) {
+        result.errorMsg = "Gemini AI: Invalid JSON response";
+        return result;
+    }
+
+    cJSON* candidates =
+        cJSON_GetObjectItem(responseRoot, "candidates");
+
+    std::string modelText;
+
+    if (cJSON_IsArray(candidates) &&
+        cJSON_GetArraySize(candidates) > 0) {
+
+        cJSON* candidate = cJSON_GetArrayItem(candidates, 0);
+        cJSON* contentNode =
+            cJSON_GetObjectItem(candidate, "content");
+
+        cJSON* partsNode =
+            contentNode ? cJSON_GetObjectItem(contentNode, "parts") : nullptr;
+
+        if (cJSON_IsArray(partsNode)) {
+            for (int i = 0; i < cJSON_GetArraySize(partsNode); ++i) {
+                cJSON* part =
+                    cJSON_GetArrayItem(partsNode, i);
+
+                cJSON* textNode =
+                    cJSON_GetObjectItem(part, "text");
+
+                if (textNode && cJSON_IsString(textNode)) {
+                    modelText = textNode->valuestring;
+                    break;
+                }
+            }
+        }
+    }
+
+    cJSON_Delete(responseRoot);
+
+    if (modelText.empty()) {
+        result.errorMsg = "Gemini AI: Empty response";
+        return result;
+    }
+
+    // Expected response:
+    // {"original":"...","translated":"..."}
+    cJSON* answer = cJSON_Parse(modelText.c_str());
+
+    if (answer) {
+        cJSON* translated =
+            cJSON_GetObjectItem(answer, "translated");
+
+        if (translated && cJSON_IsString(translated) &&
+            translated->valuestring) {
+
+            result.translatedText = translated->valuestring;
+            result.translatedLines.push_back(result.translatedText);
+            result.success = true;
+
+            cJSON_Delete(answer);
+            return result;
+        }
+
+        cJSON_Delete(answer);
+    }
+
+    // Fallback: use the model text directly.
+    result.translatedText = modelText;
+    result.translatedLines.push_back(modelText);
+    result.success = true;
+
+    return result;
+}
+
 } // namespace Translate

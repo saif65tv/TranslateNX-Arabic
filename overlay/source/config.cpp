@@ -46,10 +46,14 @@ Config load() {
             fprintf(f, "src_lang=en\n");
             fprintf(f, "dst_lang=tr\n");
             fprintf(f, "ui_lang=en\n");
+            fprintf(f, "app_mode=classic\n");
+            fprintf(f, "ai_api=gemini\n");
             fprintf(f, "ocr_api_key=\n");
             fprintf(f, "vision_api_key=\n");
             fprintf(f, "deepl_api_key=\n");
             fprintf(f, "google_trans_api_key=\n");
+            fprintf(f, "puter_api_key=\n");
+            fprintf(f, "gemini_api_key=\n");
             fclose(f);
         }
     } else {
@@ -57,6 +61,13 @@ Config load() {
     }
 
     Config cfg;
+
+    std::string modeStr = iniGet(CONFIG_PATH, "app_mode");
+    cfg.appMode = (modeStr == "ai") ? AppMode::AI : AppMode::Classic;
+
+    std::string aiStr = iniGet(CONFIG_PATH, "ai_api");
+    cfg.aiApi = (aiStr == "puter") ? AiApi::Puter : AiApi::Gemini;
+
     std::string ocrStr = iniGet(CONFIG_PATH, "ocr_api");
     if (ocrStr == "vision") cfg.ocrApi = OcrApi::GoogleVision;
     else cfg.ocrApi = OcrApi::OcrSpace;
@@ -79,6 +90,8 @@ Config load() {
     
     cfg.deeplApiKey      = iniGet(CONFIG_PATH, "deepl_api_key");
     cfg.googleTransApiKey = iniGet(CONFIG_PATH, "google_trans_api_key");
+    cfg.puterApiKey       = iniGet(CONFIG_PATH, "puter_api_key");
+    cfg.geminiApiKey      = iniGet(CONFIG_PATH, "gemini_api_key");
 
     if (cfg.srcLang.empty()) cfg.srcLang = "en";
     if (cfg.dstLang.empty()) cfg.dstLang = "tr";
@@ -99,6 +112,9 @@ void save(const Config& cfg) {
     std::vector<std::string> lines;
     bool foundOcrApi = false, foundTransApi = false, foundSrc = false, foundDst = false, foundUi = false;
     
+    const char* appModeStr = (cfg.appMode == AppMode::AI) ? "ai" : "classic";
+    const char* aiApiStr   = (cfg.aiApi == AiApi::Puter) ? "puter" : "gemini";
+
     const char* ocrStr = "ocrspace";
     if (cfg.ocrApi == OcrApi::GoogleVision) ocrStr = "vision";
 
@@ -120,6 +136,9 @@ void save(const Config& cfg) {
                 std::string dl = cfg.dstLang; for(auto& c:dl) c=tolower((unsigned char)c);
                 std::string ul = cfg.uiLang;  for(auto& c:ul) c=tolower((unsigned char)c);
                 
+                if (lkey == "app_mode") { lines.push_back("app_mode=" + std::string(appModeStr) + "\n"); continue; }
+                if (lkey == "ai_api") { lines.push_back("ai_api=" + std::string(aiApiStr) + "\n"); continue; }
+
                 if (lkey == "ocr_api") { lines.push_back("ocr_api=" + std::string(ocrStr) + "\n"); foundOcrApi = true; continue; }
                 if (lkey == "translate_api") { lines.push_back("translate_api=" + std::string(transStr) + "\n"); foundTransApi = true; continue; }
                 if (lkey == "src_lang" || lkey == "source_lang") { lines.push_back("src_lang=" + sl + "\n"); foundSrc = true; continue; }
@@ -140,6 +159,21 @@ void save(const Config& cfg) {
     if (!foundSrc) lines.push_back("src_lang=" + sl + "\n");
     if (!foundDst) lines.push_back("dst_lang=" + dl + "\n");
     if (!foundUi) lines.push_back("ui_lang=" + ul + "\n");
+
+    bool hasAppMode = false, hasAiApi = false;
+    bool hasPuterKey = false, hasGeminiKey = false;
+
+    for (const auto& line : lines) {
+        if (line.rfind("app_mode=", 0) == 0) hasAppMode = true;
+        if (line.rfind("ai_api=", 0) == 0) hasAiApi = true;
+        if (line.rfind("puter_api_key=", 0) == 0) hasPuterKey = true;
+        if (line.rfind("gemini_api_key=", 0) == 0) hasGeminiKey = true;
+    }
+
+    if (!hasAppMode) lines.push_back("app_mode=" + std::string(appModeStr) + "\n");
+    if (!hasAiApi) lines.push_back("ai_api=" + std::string(aiApiStr) + "\n");
+    if (!hasPuterKey) lines.push_back("puter_api_key=" + cfg.puterApiKey + "\n");
+    if (!hasGeminiKey) lines.push_back("gemini_api_key=" + cfg.geminiApiKey + "\n");
 
     f = fopen(CONFIG_PATH, "w");
     if (f) {
