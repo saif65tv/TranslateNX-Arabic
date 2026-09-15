@@ -25,6 +25,11 @@ static std::vector<OcrWord> g_ocrWords;
 static std::vector<std::string> g_translatedLines;
 static std::string       g_errorText;
 static std::string       g_originalText;
+static std::vector<TranslationRegion> g_translationRegions;
+
+static Thread g_aiThread;
+static std::atomic<bool> g_aiThreadRunning{false};
+static std::atomic<bool> g_aiThreadCreated{false};
 
 // ─── Yardımcı Fonksiyon: UI Çevirisi ─────────────────────────────────────
 static std::string L(const std::string& tr, const std::string& en) {
@@ -77,26 +82,23 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         }
 
         TranslateResult aiResult =
-            Translate::runGeminiAI(jpegData, g_config.geminiApiKey, g_config.dstLang);
+            Translate::runGeminiAI(
+                jpegData,
+                g_config.geminiApiKey,
+                g_config.dstLang,
+                g_config.geminiModel,
+                g_config.geminiThinking
+            );
 
         std::lock_guard<std::mutex> lk(g_resultMutex);
 
-        OcrWord aiAnchor{};
-        aiAnchor.x = 0.05f;
-        aiAnchor.y = 0.40f;
-        aiAnchor.w = 0.90f;
-        aiAnchor.h = 0.20f;
-        aiAnchor.text = aiResult.translatedText.empty()
-            ? L("AI Çevirisi", "AI Translation")
-            : aiResult.translatedText;
-
         g_ocrWords.clear();
         g_translatedLines.clear();
+        g_translationRegions.clear();
         g_originalText.clear();
 
         if (aiResult.success) {
-            g_ocrWords.push_back(aiAnchor);
-            g_translatedLines.push_back(aiResult.translatedText);
+            g_translationRegions = aiResult.regions;
             g_errorText.clear();
         } else {
             g_errorText = aiResult.errorMsg;
@@ -233,6 +235,48 @@ public:
             return false;
         });
         list->addItem(gemini);
+
+        frame->setContent(list);
+        return frame;
+    }
+};
+
+class GeminiModelSelectGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("Gemini Model", "Gemini Model"),
+            L("[B] Geri", "[B] Back")
+        );
+
+        auto* list = new tsl::elm::List();
+
+        struct ModelOption {
+            const char* id;
+            const char* label;
+        };
+
+        const ModelOption models[] = {
+            {"gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"},
+            {"gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"},
+            {"gemini-3.6-flash", "Gemini 3.6 Flash"}
+        };
+
+        for (const auto& model : models) {
+            auto* item = new tsl::elm::ListItem(model.label);
+
+            item->setClickListener([model](u64 keys) -> bool {
+                if (keys & HidNpadButton_A) {
+                    g_config.geminiModel = model.id;
+                    ConfigManager::save(g_config);
+                    tsl::goBack();
+                    return true;
+                }
+                return false;
+            });
+
+            list->addItem(item);
+        }
 
         frame->setContent(list);
         return frame;
@@ -477,18 +521,36 @@ public:
             );
 
             aiApiItem->setValue(
-                g_config.aiApi == AiApi::Puter ? "Puter AI" : "Gemini AI"
+                "Gemini AI"
             );
 
             aiApiItem->setClickListener([](u64 keys) -> bool {
+                return false;
+            });
+
+            list->addItem(aiApiItem);
+
+            auto* geminiModelItem = new tsl::elm::ListItem(
+                L("Gemini Model", "Gemini Model")
+            );
+
+            if (g_config.geminiModel == "gemini-3.5-flash-lite") {
+                geminiModelItem->setValue("Gemini 3.5 Flash-Lite");
+            } else if (g_config.geminiModel == "gemini-3.6-flash") {
+                geminiModelItem->setValue("Gemini 3.6 Flash");
+            } else {
+                geminiModelItem->setValue("Gemini 3.1 Flash-Lite");
+            }
+
+            geminiModelItem->setClickListener([](u64 keys) -> bool {
                 if (keys & HidNpadButton_A) {
-                    tsl::changeTo<AiApiSelectGui>();
+                    tsl::changeTo<GeminiModelSelectGui>();
                     return true;
                 }
                 return false;
             });
 
-            list->addItem(aiApiItem);
+            list->addItem(geminiModelItem);
         }
 
         list->addItem(new tsl::elm::CategoryHeader(L("API AYARLARI", "API SETTINGS")));
@@ -1106,6 +1168,359 @@ public:
     }
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GEMINI FULLSCREEN HUD
+// ═══════════════════════════════════════════════════════════════════════════
+
+static std::vector<std::string> wrapHudText(
+    tsl::gfx::Renderer* renderer,
+    const std::string& text,
+    float fontSize,
+    int maxWidth
+) {
+    std::vector<std::string> lines;
+
+    if (text.empty() || maxWidth <= 0)
+        return lines;
+
+    std::string normalized = text;
+    for (char& c : normalized) {
+        if (c == '\r')
+            c = ' ';
+    }
+
+    size_t start = 0;
+
+    while (start <= normalized.size()) {
+        size_t nl = normalized.find('\n', start);
+        std::string paragraph =
+            normalized.substr(
+                start,
+                nl == std::string::npos
+                    ? std::string::npos
+                    : nl - start
+            );
+
+        std::string current;
+        std::string word;
+
+        auto flushWord = [&](const std::string& w) {
+            if (w.empty())
+                return;
+
+            std::string candidate =
+                current.empty() ? w : current + " " + w;
+
+            auto size = renderer->drawString(
+                candidate.c_str(),
+                false,
+                0,
+                0,
+                fontSize,
+                tsl::Color(0, 0, 0, 0)
+            );
+
+            if (current.empty() || static_cast<int>(size.first) <= maxWidth) {
+                current = candidate;
+            } else {
+                lines.push_back(current);
+                current = w;
+            }
+        };
+
+        for (char c : paragraph) {
+            if (c == ' ' || c == '\t') {
+                flushWord(word);
+                word.clear();
+            } else {
+                word += c;
+            }
+        }
+
+        flushWord(word);
+
+        if (!current.empty())
+            lines.push_back(current);
+
+        if (nl == std::string::npos)
+            break;
+
+        start = nl + 1;
+    }
+
+    return lines;
+}
+
+static void* geminiTranslateThread(void* arg) {
+    auto* jpegData =
+        static_cast<std::vector<uint8_t>*>(arg);
+
+    if (jpegData) {
+        doTranslate(std::move(*jpegData));
+        delete jpegData;
+    }
+
+    g_aiThreadRunning.store(false, std::memory_order_release);
+    return nullptr;
+}
+
+class GeminiHudGui : public tsl::Gui {
+    bool m_started = false;
+
+public:
+    tsl::elm::Element* createUI() override {
+        auto* drawer =
+            new tsl::elm::CustomDrawer(
+                [](tsl::gfx::Renderer* renderer,
+                   s32, s32, s32, s32) {
+
+                    std::vector<TranslationRegion> regions;
+
+                    {
+                        std::lock_guard<std::mutex> lk(g_resultMutex);
+                        regions = g_translationRegions;
+                    }
+
+                    if (regions.empty())
+                        return;
+
+                    // First paint opaque backgrounds over the original text.
+                    for (const auto& r : regions) {
+                        if (r.translated.empty())
+                            continue;
+
+                        s32 x = static_cast<s32>(r.x);
+                        s32 y = static_cast<s32>(r.y);
+                        s32 w = static_cast<s32>(r.w);
+                        s32 h = static_cast<s32>(r.h);
+
+                        if (w < 8 || h < 8)
+                            continue;
+
+                        x = std::max<s32>(0, std::min<s32>(1279, x));
+                        y = std::max<s32>(0, std::min<s32>(719, y));
+
+                        w = std::min<s32>(w, 1280 - x);
+                        h = std::min<s32>(h, 720 - y);
+
+                        // Fully opaque dark rectangle prevents the original
+                        // game text from showing through the Arabic overlay.
+                        renderer->drawRect(
+                            x,
+                            y,
+                            w,
+                            h,
+                            tsl::Color(0, 0, 0, 15)
+                        );
+                    }
+
+                    // Then draw Arabic only, inside each original region.
+                    for (const auto& r : regions) {
+                        if (r.translated.empty())
+                            continue;
+
+                        s32 x = static_cast<s32>(r.x);
+                        s32 y = static_cast<s32>(r.y);
+                        s32 w = static_cast<s32>(r.w);
+                        s32 h = static_cast<s32>(r.h);
+
+                        if (w < 8 || h < 8)
+                            continue;
+
+                        x = std::max<s32>(0, std::min<s32>(1279, x));
+                        y = std::max<s32>(0, std::min<s32>(719, y));
+                        w = std::min<s32>(w, 1280 - x);
+                        h = std::min<s32>(h, 720 - y);
+
+                        const int innerW = std::max<s32>(20, w - 16);
+
+                        float fontSize = std::min<float>(
+                            28.0f,
+                            std::max<float>(14.0f, h * 0.42f)
+                        );
+
+                        std::vector<std::string> lines;
+
+                        // Reduce font size until the complete translation
+                        // fits inside the original box.
+                        for (; fontSize >= 12.0f; fontSize -= 2.0f) {
+                            lines = wrapHudText(
+                                renderer,
+                                r.translated,
+                                fontSize,
+                                innerW
+                            );
+
+                            const float lineHeight = fontSize + 3.0f;
+                            const float totalHeight =
+                                lines.size() * lineHeight;
+
+                            if (totalHeight <= std::max<float>(h - 8, lineHeight))
+                                break;
+                        }
+
+                        if (lines.empty())
+                            continue;
+
+                        const float lineHeight = fontSize + 3.0f;
+                        const float totalHeight =
+                            lines.size() * lineHeight;
+
+                        float textY =
+                            y + (h - totalHeight) * 0.5f + fontSize;
+
+                        renderer->enableScissoring(
+                            x,
+                            y,
+                            w,
+                            h
+                        );
+
+                        for (const auto& line : lines) {
+                            auto measured =
+                                renderer->drawString(
+                                    line.c_str(),
+                                    false,
+                                    0,
+                                    0,
+                                    fontSize,
+                                    tsl::Color(0, 0, 0, 0)
+                                );
+
+                            const s32 textW =
+                                static_cast<s32>(measured.first);
+
+                            const s32 textX =
+                                x + std::max<s32>(
+                                    4,
+                                    (w - textW) / 2
+                                );
+
+                            renderer->drawString(
+                                line.c_str(),
+                                false,
+                                textX,
+                                static_cast<s32>(textY),
+                                fontSize,
+                                tsl::Color(255, 255, 255, 15)
+                            );
+
+                            textY += lineHeight;
+                        }
+
+                        renderer->disableScissoring();
+                    }
+                }
+            );
+
+        drawer->setBoundaries(
+            0,
+            0,
+            1280,
+            720
+        );
+
+        return drawer;
+    }
+
+    void update() override {
+        if (m_started)
+            return;
+
+        m_started = true;
+
+        {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_translationRegions.clear();
+            g_errorText.clear();
+            g_ocrWords.clear();
+            g_translatedLines.clear();
+            g_originalText.clear();
+        }
+
+        auto shot = ScreenshotCapture::capture(65);
+
+        g_screenshotData =
+            std::move(shot.jpegData);
+
+        if (g_screenshotData.empty()) {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_errorText =
+                L(
+                    "AI Hatası: Ekran görüntüsü alınamadı",
+                    "AI Error: Screenshot could not be captured"
+                );
+            return;
+        }
+
+        g_translating = true;
+
+        auto* jpegForThread =
+            new std::vector<uint8_t>(
+                std::move(g_screenshotData)
+            );
+
+        g_screenshotData.clear();
+
+        g_aiThreadRunning.store(true, std::memory_order_release);
+
+        Result rc = threadCreate(
+            &g_aiThread,
+            geminiTranslateThread,
+            jpegForThread,
+            nullptr,
+            0x8000,
+            0x2C,
+            -2
+        );
+
+        if (R_FAILED(rc)) {
+            delete jpegForThread;
+
+            g_aiThreadRunning.store(false, std::memory_order_release);
+
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_errorText =
+                L(
+                    "AI Hatası: Thread başlatılamadı",
+                    "AI Error: Could not start translation thread"
+                );
+
+            g_translating = false;
+            return;
+        }
+
+        g_aiThreadCreated.store(true, std::memory_order_release);
+
+        rc = threadStart(&g_aiThread);
+
+        if (R_FAILED(rc)) {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            g_errorText =
+                L(
+                    "AI Hatası: Thread başlatılamadı",
+                    "AI Error: Could not start translation thread"
+                );
+
+            g_aiThreadRunning.store(false, std::memory_order_release);
+            g_translating = false;
+        }
+    }
+
+    bool handleInput(
+        u64,
+        u64,
+        const HidTouchState&,
+        HidAnalogStickState,
+        HidAnalogStickState
+    ) override {
+        // Do not turn the HUD into a menu.
+        // Returning false lets the game remain interactive underneath.
+        return false;
+    }
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // OVERLAY GİRİŞ NOKTASI
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1122,6 +1537,12 @@ public:
     }
 
     void exitServices() override {
+        if (g_aiThreadCreated.load(std::memory_order_acquire)) {
+            threadWaitForExit(&g_aiThread);
+            g_aiThreadCreated.store(false, std::memory_order_release);
+            g_aiThreadRunning.store(false, std::memory_order_release);
+        }
+
         HttpClient::cleanup();
     }
 
@@ -1130,6 +1551,13 @@ public:
         g_config = ConfigManager::load();
         ult::useHapticFeedback = false; // Titreşimi tamamen kapat
 
+        // Direct "translate" launch:
+        // no settings/menu, start Gemini HUD directly.
+        if (ult::lastOverlayMode == "translate") {
+            return initially<GeminiHudGui>();
+        }
+
+        // Normal launch: keep the regular settings/menu interface.
         return initially<TranslateGui>();
     }
 };

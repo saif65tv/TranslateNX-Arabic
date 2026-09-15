@@ -46,7 +46,7 @@ Config load() {
             fprintf(f, "src_lang=en\n");
             fprintf(f, "dst_lang=tr\n");
             fprintf(f, "ui_lang=en\n");
-            fprintf(f, "app_mode=classic\n");
+            fprintf(f, "app_mode=ai\n");
             fprintf(f, "ai_api=gemini\n");
             fprintf(f, "ocr_api_key=\n");
             fprintf(f, "vision_api_key=\n");
@@ -54,6 +54,8 @@ Config load() {
             fprintf(f, "google_trans_api_key=\n");
             fprintf(f, "puter_api_key=\n");
             fprintf(f, "gemini_api_key=\n");
+            fprintf(f, "gemini_model=gemini-3.1-flash-lite\n");
+            fprintf(f, "gemini_thinking=minimal\n");
             fclose(f);
         }
     } else {
@@ -92,6 +94,14 @@ Config load() {
     cfg.googleTransApiKey = iniGet(CONFIG_PATH, "google_trans_api_key");
     cfg.puterApiKey       = iniGet(CONFIG_PATH, "puter_api_key");
     cfg.geminiApiKey      = iniGet(CONFIG_PATH, "gemini_api_key");
+    cfg.geminiModel       = iniGet(CONFIG_PATH, "gemini_model");
+    cfg.geminiThinking    = iniGet(CONFIG_PATH, "gemini_thinking");
+
+    if (cfg.geminiModel.empty())
+        cfg.geminiModel = "gemini-3.1-flash-lite";
+
+    if (cfg.geminiThinking.empty())
+        cfg.geminiThinking = "minimal";
 
     if (cfg.srcLang.empty()) cfg.srcLang = "en";
     if (cfg.dstLang.empty()) cfg.dstLang = "tr";
@@ -138,6 +148,8 @@ void save(const Config& cfg) {
                 
                 if (lkey == "app_mode") { lines.push_back("app_mode=" + std::string(appModeStr) + "\n"); continue; }
                 if (lkey == "ai_api") { lines.push_back("ai_api=" + std::string(aiApiStr) + "\n"); continue; }
+                if (lkey == "gemini_model") { lines.push_back("gemini_model=" + cfg.geminiModel + "\n"); continue; }
+                if (lkey == "gemini_thinking") { lines.push_back("gemini_thinking=" + cfg.geminiThinking + "\n"); continue; }
 
                 if (lkey == "ocr_api") { lines.push_back("ocr_api=" + std::string(ocrStr) + "\n"); foundOcrApi = true; continue; }
                 if (lkey == "translate_api") { lines.push_back("translate_api=" + std::string(transStr) + "\n"); foundTransApi = true; continue; }
@@ -174,6 +186,20 @@ void save(const Config& cfg) {
     if (!hasAiApi) lines.push_back("ai_api=" + std::string(aiApiStr) + "\n");
     if (!hasPuterKey) lines.push_back("puter_api_key=" + cfg.puterApiKey + "\n");
     if (!hasGeminiKey) lines.push_back("gemini_api_key=" + cfg.geminiApiKey + "\n");
+
+    bool hasGeminiModel = false;
+    bool hasGeminiThinking = false;
+
+    for (const auto& line : lines) {
+        if (line.rfind("gemini_model=", 0) == 0) hasGeminiModel = true;
+        if (line.rfind("gemini_thinking=", 0) == 0) hasGeminiThinking = true;
+    }
+
+    if (!hasGeminiModel)
+        lines.push_back("gemini_model=" + cfg.geminiModel + "\n");
+
+    if (!hasGeminiThinking)
+        lines.push_back("gemini_thinking=" + cfg.geminiThinking + "\n");
 
     f = fopen(CONFIG_PATH, "w");
     if (f) {

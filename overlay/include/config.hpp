@@ -23,7 +23,7 @@ enum class AiApi {
 };
 
 struct Config {
-    AppMode       appMode      = AppMode::Classic;
+    AppMode       appMode      = AppMode::AI;
     AiApi         aiApi        = AiApi::Gemini;
 
     OcrApi        ocrApi       = OcrApi::OcrSpace;
@@ -40,6 +40,9 @@ struct Config {
 
     std::string   puterApiKey;
     std::string   geminiApiKey;
+
+    std::string   geminiModel = "gemini-3.1-flash-lite";
+    std::string   geminiThinking = "minimal";
 };
 
 namespace ConfigManager {

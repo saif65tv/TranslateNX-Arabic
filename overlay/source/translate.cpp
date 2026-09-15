@@ -316,7 +316,9 @@ static std::string encodeBase64(const std::vector<uint8_t>& data) {
 TranslateResult runGeminiAI(
     const std::vector<uint8_t>& jpegData,
     const std::string& apiKey,
-    const std::string& targetLang
+    const std::string& targetLang,
+    const std::string& model,
+    const std::string& thinking
 ) {
     TranslateResult result;
 
@@ -332,13 +334,22 @@ TranslateResult runGeminiAI(
 
     std::string image64 = encodeBase64(jpegData);
 
-    std::string prompt =
-        "Please extract all visible text from this image and translate it to " +
+    const std::string prompt =
+        "Analyze this game screenshot. Find ALL visible human-readable text "
+        "regions, including main dialogue, subtitles, menus, labels, buttons, "
+        "small side text, status text, and other peripheral text. "
+        "Do not omit text just because it is small. "
+        "For every text region, provide its bounding box as "
+        "[ymin, xmin, ymax, xmax] normalized from 0 to 1000, "
+        "the exact original text, and a natural translation to " +
         targetLang +
-        ". Preserve the meaning and natural context of the original text. "
-        "Return ONLY a raw JSON object with no markdown formatting, "
-        "containing exactly two keys: \"original\" (the extracted text) "
-        "and \"translated\" (the translation).";
+        ". Keep each region separate. "
+        "Do not merge unrelated regions. "
+        "Do not create duplicate regions for the same text. "
+        "The translated text must be suitable for drawing directly over "
+        "the original game text. "
+        "Preserve names, numbers, punctuation and important meaning. "
+        "Return only the requested JSON schema.";
 
     cJSON* root = cJSON_CreateObject();
     cJSON* contents = cJSON_CreateArray();
@@ -351,8 +362,15 @@ TranslateResult runGeminiAI(
 
     cJSON* imagePart = cJSON_CreateObject();
     cJSON* inlineData = cJSON_CreateObject();
-    cJSON_AddStringToObject(inlineData, "mime_type", "image/jpeg");
-    cJSON_AddStringToObject(inlineData, "data", image64.c_str());
+
+    cJSON_AddStringToObject(
+        inlineData, "mime_type", "image/jpeg"
+    );
+
+    cJSON_AddStringToObject(
+        inlineData, "data", image64.c_str()
+    );
+
     cJSON_AddItemToObject(imagePart, "inline_data", inlineData);
     cJSON_AddItemToArray(parts, imagePart);
 
@@ -360,73 +378,321 @@ TranslateResult runGeminiAI(
     cJSON_AddItemToArray(contents, content);
     cJSON_AddItemToObject(root, "contents", contents);
 
+    // Gemini structured output schema:
+    //
+    // {
+    //   "regions": [
+    //      {
+    //        "box_2d": [ymin, xmin, ymax, xmax],
+    //        "original": "...",
+    //        "translated": "..."
+    //      }
+    //   ]
+    // }
+
+    cJSON* generationConfig =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        generationConfig,
+        "responseMimeType",
+        "application/json"
+    );
+
+    cJSON* responseSchema =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        responseSchema,
+        "type",
+        "OBJECT"
+    );
+
+    cJSON* properties =
+        cJSON_CreateObject();
+
+    cJSON* regionsSchema =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        regionsSchema,
+        "type",
+        "ARRAY"
+    );
+
+    cJSON* regionItems =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        regionItems,
+        "type",
+        "OBJECT"
+    );
+
+    cJSON* regionProperties =
+        cJSON_CreateObject();
+
+    cJSON* boxSchema =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        boxSchema,
+        "type",
+        "ARRAY"
+    );
+
+    cJSON* boxItems =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        boxItems,
+        "type",
+        "INTEGER"
+    );
+
+    cJSON_AddItemToObject(
+        boxSchema,
+        "items",
+        boxItems
+    );
+
+    cJSON_AddNumberToObject(
+        boxSchema,
+        "minItems",
+        4
+    );
+
+    cJSON_AddNumberToObject(
+        boxSchema,
+        "maxItems",
+        4
+    );
+
+    cJSON_AddItemToObject(
+        regionProperties,
+        "box_2d",
+        boxSchema
+    );
+
+    cJSON* originalSchema =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        originalSchema,
+        "type",
+        "STRING"
+    );
+
+    cJSON_AddItemToObject(
+        regionProperties,
+        "original",
+        originalSchema
+    );
+
+    cJSON* translatedSchema =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        translatedSchema,
+        "type",
+        "STRING"
+    );
+
+    cJSON_AddItemToObject(
+        regionProperties,
+        "translated",
+        translatedSchema
+    );
+
+    cJSON_AddItemToObject(
+        regionItems,
+        "properties",
+        regionProperties
+    );
+
+    cJSON* requiredRegion =
+        cJSON_CreateArray();
+
+    cJSON_AddItemToArray(
+        requiredRegion,
+        cJSON_CreateString("box_2d")
+    );
+
+    cJSON_AddItemToArray(
+        requiredRegion,
+        cJSON_CreateString("original")
+    );
+
+    cJSON_AddItemToArray(
+        requiredRegion,
+        cJSON_CreateString("translated")
+    );
+
+    cJSON_AddItemToObject(
+        regionItems,
+        "required",
+        requiredRegion
+    );
+
+    cJSON_AddItemToObject(
+        regionsSchema,
+        "items",
+        regionItems
+    );
+
+    cJSON_AddItemToObject(
+        properties,
+        "regions",
+        regionsSchema
+    );
+
+    cJSON_AddItemToObject(
+        responseSchema,
+        "properties",
+        properties
+    );
+
+    cJSON* requiredRoot =
+        cJSON_CreateArray();
+
+    cJSON_AddItemToArray(
+        requiredRoot,
+        cJSON_CreateString("regions")
+    );
+
+    cJSON_AddItemToObject(
+        responseSchema,
+        "required",
+        requiredRoot
+    );
+
+    cJSON_AddItemToObject(
+        generationConfig,
+        "responseSchema",
+        responseSchema
+    );
+
+    // Gemini 3.1 Flash-Lite supports minimal thinking.
+    cJSON* thinkingConfig =
+        cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        thinkingConfig,
+        "thinkingLevel",
+        selectedThinking.c_str()
+    );
+
+    cJSON_AddItemToObject(
+        generationConfig,
+        "thinkingConfig",
+        thinkingConfig
+    );
+
+    cJSON_AddItemToObject(
+        root,
+        "generationConfig",
+        generationConfig
+    );
+
     char* json = cJSON_PrintUnformatted(root);
     std::string body(json ? json : "");
+
     if (json)
         free(json);
+
     cJSON_Delete(root);
 
-    std::string url =
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-3.1-flash-lite:generateContent?key=" + apiKey;
+    const std::string selectedModel =
+        model.empty() ? "gemini-3.1-flash-lite" : model;
 
-    HttpResponse resp;
+    const std::string selectedThinking =
+        thinking.empty() ? "minimal" : thinking;
 
-    for (int retry = 0; retry < 3; ++retry) {
-        resp = HttpClient::post(
-            url,
-            body,
-            {"Content-Type: application/json"}
-        );
+    const std::string url =
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        selectedModel +
+        ":generateContent?key=" + apiKey;
 
-        if (resp.ok())
-            break;
-
-        svcSleepThread(1000000000ull);
-    }
+    HttpResponse resp = HttpClient::post(
+        url,
+        body,
+        {"Content-Type: application/json"}
+    );
 
     if (!resp.ok()) {
         if (resp.statusCode == 0) {
             result.errorMsg =
-                "Gemini AI: Connection failed — " + resp.errorStr;
+                "Gemini AI: Connection failed — " +
+                resp.errorStr;
         } else {
             result.errorMsg =
-                "Gemini AI: HTTP " + std::to_string(resp.statusCode);
+                "Gemini AI: HTTP " +
+                std::to_string(resp.statusCode);
         }
+
         return result;
     }
 
-    cJSON* responseRoot = cJSON_Parse(resp.body.c_str());
+    cJSON* responseRoot =
+        cJSON_Parse(resp.body.c_str());
+
     if (!responseRoot) {
-        result.errorMsg = "Gemini AI: Invalid JSON response";
+        result.errorMsg =
+            "Gemini AI: Invalid JSON response";
         return result;
     }
 
     cJSON* candidates =
-        cJSON_GetObjectItem(responseRoot, "candidates");
+        cJSON_GetObjectItem(
+            responseRoot,
+            "candidates"
+        );
 
     std::string modelText;
 
     if (cJSON_IsArray(candidates) &&
         cJSON_GetArraySize(candidates) > 0) {
 
-        cJSON* candidate = cJSON_GetArrayItem(candidates, 0);
+        cJSON* candidate =
+            cJSON_GetArrayItem(candidates, 0);
+
         cJSON* contentNode =
-            cJSON_GetObjectItem(candidate, "content");
+            cJSON_GetObjectItem(
+                candidate,
+                "content"
+            );
 
         cJSON* partsNode =
-            contentNode ? cJSON_GetObjectItem(contentNode, "parts") : nullptr;
+            contentNode
+                ? cJSON_GetObjectItem(
+                      contentNode,
+                      "parts")
+                : nullptr;
 
         if (cJSON_IsArray(partsNode)) {
-            for (int i = 0; i < cJSON_GetArraySize(partsNode); ++i) {
+            for (int i = 0;
+                 i < cJSON_GetArraySize(partsNode);
+                 ++i) {
+
                 cJSON* part =
-                    cJSON_GetArrayItem(partsNode, i);
+                    cJSON_GetArrayItem(
+                        partsNode,
+                        i
+                    );
 
                 cJSON* textNode =
-                    cJSON_GetObjectItem(part, "text");
+                    cJSON_GetObjectItem(
+                        part,
+                        "text"
+                    );
 
-                if (textNode && cJSON_IsString(textNode)) {
-                    modelText = textNode->valuestring;
+                if (textNode &&
+                    cJSON_IsString(textNode) &&
+                    textNode->valuestring) {
+
+                    modelText =
+                        textNode->valuestring;
+
                     break;
                 }
             }
@@ -436,37 +702,147 @@ TranslateResult runGeminiAI(
     cJSON_Delete(responseRoot);
 
     if (modelText.empty()) {
-        result.errorMsg = "Gemini AI: Empty response";
+        result.errorMsg =
+            "Gemini AI: Empty response";
         return result;
     }
 
-    // Expected response:
-    // {"original":"...","translated":"..."}
-    cJSON* answer = cJSON_Parse(modelText.c_str());
+    cJSON* answer =
+        cJSON_Parse(modelText.c_str());
 
-    if (answer) {
-        cJSON* translated =
-            cJSON_GetObjectItem(answer, "translated");
-
-        if (translated && cJSON_IsString(translated) &&
-            translated->valuestring) {
-
-            result.translatedText = translated->valuestring;
-            result.translatedLines.push_back(result.translatedText);
-            result.success = true;
-
-            cJSON_Delete(answer);
-            return result;
-        }
-
-        cJSON_Delete(answer);
+    if (!answer) {
+        result.errorMsg =
+            "Gemini AI: Could not parse structured response";
+        return result;
     }
 
-    // Fallback: use the model text directly.
-    result.translatedText = modelText;
-    result.translatedLines.push_back(modelText);
-    result.success = true;
+    cJSON* regions =
+        cJSON_GetObjectItem(
+            answer,
+            "regions"
+        );
 
+    if (!cJSON_IsArray(regions)) {
+        cJSON_Delete(answer);
+        result.errorMsg =
+            "Gemini AI: Response has no regions";
+        return result;
+    }
+
+    const int regionCount =
+        cJSON_GetArraySize(regions);
+
+    for (int i = 0;
+         i < regionCount;
+         ++i) {
+
+        cJSON* region =
+            cJSON_GetArrayItem(
+                regions,
+                i
+            );
+
+        cJSON* box =
+            cJSON_GetObjectItem(
+                region,
+                "box_2d"
+            );
+
+        cJSON* original =
+            cJSON_GetObjectItem(
+                region,
+                "original"
+            );
+
+        cJSON* translated =
+            cJSON_GetObjectItem(
+                region,
+                "translated"
+            );
+
+        if (!cJSON_IsArray(box) ||
+            cJSON_GetArraySize(box) != 4 ||
+            !original ||
+            !cJSON_IsString(original) ||
+            !translated ||
+            !cJSON_IsString(translated)) {
+
+            continue;
+        }
+
+        cJSON* n0 = cJSON_GetArrayItem(box, 0);
+        cJSON* n1 = cJSON_GetArrayItem(box, 1);
+        cJSON* n2 = cJSON_GetArrayItem(box, 2);
+        cJSON* n3 = cJSON_GetArrayItem(box, 3);
+
+        if (!n0 || !n1 || !n2 || !n3 ||
+            !cJSON_IsNumber(n0) ||
+            !cJSON_IsNumber(n1) ||
+            !cJSON_IsNumber(n2) ||
+            !cJSON_IsNumber(n3)) {
+
+            continue;
+        }
+
+        float ymin = static_cast<float>(n0->valueint);
+        float xmin = static_cast<float>(n1->valueint);
+        float ymax = static_cast<float>(n2->valueint);
+        float xmax = static_cast<float>(n3->valueint);
+
+        // Gemini coordinates are normalized to 0..1000.
+        ymin = std::max(0.0f, std::min(1000.0f, ymin));
+        xmin = std::max(0.0f, std::min(1000.0f, xmin));
+        ymax = std::max(0.0f, std::min(1000.0f, ymax));
+        xmax = std::max(0.0f, std::min(1000.0f, xmax));
+
+        if (xmax <= xmin ||
+            ymax <= ymin) {
+            continue;
+        }
+
+        TranslationRegion r;
+
+        r.x = (xmin / 1000.0f) * 1280.0f;
+        r.y = (ymin / 1000.0f) * 720.0f;
+
+        r.w = ((xmax - xmin) / 1000.0f) * 1280.0f;
+        r.h = ((ymax - ymin) / 1000.0f) * 720.0f;
+
+        r.original =
+            original->valuestring;
+
+        r.translated =
+            translated->valuestring;
+
+        if (r.original.empty() ||
+            r.translated.empty()) {
+            continue;
+        }
+
+        result.regions.push_back(
+            std::move(r)
+        );
+    }
+
+    cJSON_Delete(answer);
+
+    if (result.regions.empty()) {
+        result.errorMsg =
+            "Gemini AI: No text regions detected";
+        return result;
+    }
+
+    // Compatibility with the existing result system.
+    result.translatedText =
+        result.regions.front().translated;
+
+    for (const auto& r : result.regions) {
+        result.translatedLines.push_back(
+            r.translated
+        );
+    }
+
+    result.success = true;
     return result;
 }
 

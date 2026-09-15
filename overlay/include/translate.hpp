@@ -3,10 +3,21 @@
 #include <vector>
 #include <cstdint>
 
+struct TranslationRegion {
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+
+    std::string original;
+    std::string translated;
+};
+
 struct TranslateResult {
     bool        success = false;
     std::string translatedText;
     std::vector<std::string> translatedLines;
+    std::vector<TranslationRegion> regions;
     std::string errorMsg;
 };
 
@@ -26,5 +37,7 @@ namespace Translate {
 
     TranslateResult runGeminiAI(const std::vector<uint8_t>& jpegData,
                                 const std::string& apiKey,
-                                const std::string& targetLang);
+                                const std::string& targetLang,
+                                const std::string& model,
+                                const std::string& thinking);
 }
