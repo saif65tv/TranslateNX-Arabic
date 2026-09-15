@@ -62,7 +62,11 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
     }
 
     // AI Mode: Gemini reads and translates the screenshot directly.
-    if (g_config.appMode == AppMode::AI) {
+    // This build is Gemini-only.
+    g_config.appMode = AppMode::AI;
+    g_config.aiApi = AiApi::Gemini;
+
+    {
         if (g_config.aiApi != AiApi::Gemini) {
             std::lock_guard<std::mutex> lk(g_resultMutex);
             g_errorText =
@@ -107,6 +111,15 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         g_translating = false;
         return;
     }
+
+    // This build never enters the old OCR/translation path.
+    // Keep the legacy code below unreachable for safety.
+    g_errorText = L(
+        "AI Hatası: Gemini işlem yolu başarısız.",
+        "AI Error: Gemini translation path failed."
+    );
+    g_translating = false;
+    return;
 
     OcrResult ocr;
     if (g_config.ocrApi == OcrApi::GoogleVision) {
@@ -1016,11 +1029,7 @@ public:
             
             tsl::goBack(); // LoadingGui'yi kapat
 
-            if (g_config.appMode == AppMode::AI) {
-                openGeminiHud();
-            } else {
-                tsl::changeTo<TranslationResultGui>();
-            }
+            openGeminiHud();
         }
     }
     
@@ -1051,15 +1060,9 @@ public:
             
             tsl::goBack(); // ScreenshotWaitGui'yi kapat
 
-            if (g_config.appMode == AppMode::AI) {
-                // The screenshot is ready. GeminiHudGui will start
-                // the background Gemini worker using this screenshot.
-                g_translating = false;
-                openGeminiHud();
-            } else {
-                // Classic: keep the old loading/result flow.
-                tsl::changeTo<LoadingGui>();
-            }
+            // Gemini-only build: never enter the legacy LoadingGui.
+            g_translating = false;
+            openGeminiHud();
         }
     }
     
