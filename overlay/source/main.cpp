@@ -991,6 +991,8 @@ public:
 };
 
 // ─── Global olarak çekilen fotoğrafı saklayalım ───────────────────────────
+static void openGeminiHud();
+
 static std::vector<uint8_t> g_screenshotData;
 
 class LoadingGui : public tsl::Gui {
@@ -1013,7 +1015,12 @@ public:
             g_screenshotData.clear();
             
             tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+
+            if (g_config.appMode == AppMode::AI) {
+                openGeminiHud();
+            } else {
+                tsl::changeTo<TranslationResultGui>();
+            }
         }
     }
     
@@ -1043,7 +1050,16 @@ public:
             g_screenshotData = std::move(shot.jpegData);
             
             tsl::goBack(); // ScreenshotWaitGui'yi kapat
-            tsl::changeTo<LoadingGui>(); // Kullanıcıya yükleniyor ekranını göster
+
+            if (g_config.appMode == AppMode::AI) {
+                // The screenshot is ready. GeminiHudGui will start
+                // the background Gemini worker using this screenshot.
+                g_translating = false;
+                openGeminiHud();
+            } else {
+                // Classic: keep the old loading/result flow.
+                tsl::changeTo<LoadingGui>();
+            }
         }
     }
     
@@ -1380,10 +1396,21 @@ public:
         if (m_started)
             return;
 
-        m_started = true;
-
         {
             std::lock_guard<std::mutex> lk(g_resultMutex);
+
+            // Start Translating already completed Gemini.
+            // In this case the HUD only draws the returned regions.
+            if (!g_translationRegions.empty() || !g_errorText.empty()) {
+                m_started = true;
+                return;
+            }
+
+            // If a Gemini request is already in progress, wait for it.
+            if (g_translating) {
+                return;
+            }
+
             g_translationRegions.clear();
             g_errorText.clear();
             g_ocrWords.clear();
@@ -1391,10 +1418,15 @@ public:
             g_originalText.clear();
         }
 
-        auto shot = ScreenshotCapture::capture(65);
+        m_started = true;
 
-        g_screenshotData =
-            std::move(shot.jpegData);
+        // Reuse the screenshot captured by ScreenshotWaitGui.
+        // Only capture a new screenshot if this HUD was opened directly
+        // without a pending screenshot.
+        if (g_screenshotData.empty()) {
+            auto shot = ScreenshotCapture::capture(65);
+            g_screenshotData = std::move(shot.jpegData);
+        }
 
         if (g_screenshotData.empty()) {
             std::lock_guard<std::mutex> lk(g_resultMutex);
@@ -1472,6 +1504,10 @@ public:
         return false;
     }
 };
+
+static void openGeminiHud() {
+    tsl::changeTo<GeminiHudGui>();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OVERLAY GİRİŞ NOKTASI
