@@ -992,6 +992,7 @@ public:
 
 // ─── Global olarak çekilen fotoğrafı saklayalım ───────────────────────────
 static std::vector<uint8_t> g_screenshotData;
+static bool g_directHudActive = false;
 
 class LoadingGui : public tsl::Gui {
     int m_frames = 0;
@@ -1026,27 +1027,48 @@ class ScreenshotWaitGui : public tsl::Gui {
     int m_frames = 0;
 public:
     tsl::elm::Element* createUI() override {
-        // Tamamen seffaf element, menuyu gizler
-        auto* dummy = new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* r, s32, s32, s32, s32){
-            r->clearScreen();
-        });
+        auto* dummy = new tsl::elm::CustomDrawer(
+            [](tsl::gfx::Renderer* r, s32, s32, s32, s32) {
+                r->clearScreen();
+
+                if (g_directHudActive) {
+                    r->drawString(
+                        "مرحبا بالعربية",
+                        false,
+                        120,
+                        150,
+                        28.0f,
+                        tsl::Color(255, 255, 255, 15)
+                    );
+                }
+            }
+        );
+
         dummy->setBoundaries(0, 0, 1280, 720);
         return dummy;
     }
-    
+
     void update() override {
+        if (g_directHudActive)
+            return;
+
         m_frames++;
-        // Menünün tamamen ekrandan kaymasını beklemek için 40 kare (~0.6 sn) bekle
+
         if (m_frames == 40) {
-            // Ekran tam temizken çekim yap
             auto shot = ScreenshotCapture::capture(65);
             g_screenshotData = std::move(shot.jpegData);
-            
-            tsl::goBack(); // ScreenshotWaitGui'yi kapat
-            tsl::changeTo<LoadingGui>(); // Kullanıcıya yükleniyor ekranını göster
+
+            // Keep this SAME GUI alive.
+            // Gemini runs once here, synchronously.
+            doTranslate(std::move(g_screenshotData));
+            g_screenshotData.clear();
+
+            // From the next frame onward, this same CustomDrawer
+            // becomes the fullscreen HUD.
+            g_directHudActive = true;
         }
     }
-    
+
     bool handleInput(u64 keysDown, u64, const HidTouchState&, HidAnalogStickState, HidAnalogStickState) override {
         return false;
     }
