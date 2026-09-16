@@ -41,6 +41,7 @@ class SetupGui;
 class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
+static void openGeminiHud();
 
 void reloadOverlay();
 
@@ -1013,7 +1014,7 @@ public:
             g_screenshotData.clear();
             
             tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            openGeminiHud(); // Display completed Gemini regions
         }
     }
     
@@ -1402,6 +1403,10 @@ public:
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+static void openGeminiHud() {
+    tsl::changeTo<GeminiHudGui>();
+}
+
 // OVERLAY GİRİŞ NOKTASI
 // ═══════════════════════════════════════════════════════════════════════════
 
