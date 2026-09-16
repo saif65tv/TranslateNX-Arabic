@@ -41,6 +41,7 @@ class SetupGui;
 class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
+static void openGeminiHud();
 
 void reloadOverlay();
 
