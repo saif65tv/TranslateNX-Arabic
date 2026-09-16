@@ -572,6 +572,9 @@ TranslateResult runGeminiAI(
         responseSchema
     );
 
+    const std::string selectedThinking =
+        thinking.empty() ? "minimal" : thinking;
+
     // Gemini 3.1 Flash-Lite supports minimal thinking.
     cJSON* thinkingConfig =
         cJSON_CreateObject();
@@ -604,9 +607,6 @@ TranslateResult runGeminiAI(
 
     const std::string selectedModel =
         model.empty() ? "gemini-3.1-flash-lite" : model;
-
-    const std::string selectedThinking =
-        thinking.empty() ? "minimal" : thinking;
 
     const std::string url =
         "https://generativelanguage.googleapis.com/v1beta/models/" +
