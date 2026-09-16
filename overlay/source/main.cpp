@@ -41,6 +41,7 @@ class SetupGui;
 class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
+class HudLifecycleTestGui;
 
 void reloadOverlay();
 
@@ -1013,7 +1014,7 @@ public:
             g_screenshotData.clear();
             
             tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            tsl::changeTo<HudLifecycleTestGui>(); // Lifecycle test
         }
     }
     
@@ -1469,6 +1470,41 @@ public:
     ) override {
         // Do not turn the HUD into a menu.
         // Returning false lets the game remain interactive underneath.
+        return false;
+    }
+};
+
+class HudLifecycleTestGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            "TranslateNX",
+            "HUD TEST"
+        );
+
+        auto* list = new tsl::elm::List();
+        list->addItem(
+            new tsl::elm::ListItem("HUD TEST - GUI CREATED")
+        );
+
+        frame->setContent(list);
+        return frame;
+    }
+
+    void update() override {
+    }
+
+    bool handleInput(
+        u64 keysDown,
+        u64,
+        const HidTouchState&,
+        HidAnalogStickState,
+        HidAnalogStickState
+    ) override {
+        if (keysDown & HidNpadButton_B) {
+            tsl::goBack();
+            return true;
+        }
         return false;
     }
 };
