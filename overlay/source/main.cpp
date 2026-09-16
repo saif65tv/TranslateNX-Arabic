@@ -1477,18 +1477,14 @@ public:
 class HudLifecycleTestGui : public tsl::Gui {
 public:
     tsl::elm::Element* createUI() override {
-        auto* frame = new tsl::elm::OverlayFrame(
-            "TranslateNX",
-            "HUD TEST"
+        auto* drawer = new tsl::elm::CustomDrawer(
+            [](tsl::gfx::Renderer*, s32, s32, s32, s32) {
+                // Intentionally empty.
+            }
         );
 
-        auto* list = new tsl::elm::List();
-        list->addItem(
-            new tsl::elm::ListItem("HUD TEST - GUI CREATED")
-        );
-
-        frame->setContent(list);
-        return frame;
+        drawer->setBoundaries(0, 0, 1280, 720);
+        return drawer;
     }
 
     void update() override {
