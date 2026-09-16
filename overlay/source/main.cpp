@@ -41,6 +41,7 @@ class SetupGui;
 class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
+class ScreenshotWaitGui;
 
 void reloadOverlay();
 
@@ -992,6 +993,7 @@ public:
 
 // ─── Global olarak çekilen fotoğrafı saklayalım ───────────────────────────
 static std::vector<uint8_t> g_screenshotData;
+static bool g_directHudActive = false;
 
 class LoadingGui : public tsl::Gui {
     int m_frames = 0;
@@ -1012,8 +1014,8 @@ public:
             doTranslate(std::move(g_screenshotData));
             g_screenshotData.clear();
             
-            tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            g_directHudActive = true;
+            tsl::changeTo<ScreenshotWaitGui>();
         }
     }
     
@@ -1026,27 +1028,185 @@ class ScreenshotWaitGui : public tsl::Gui {
     int m_frames = 0;
 public:
     tsl::elm::Element* createUI() override {
-        // Tamamen seffaf element, menuyu gizler
-        auto* dummy = new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* r, s32, s32, s32, s32){
-            r->clearScreen();
-        });
+        auto* dummy = new tsl::elm::CustomDrawer(
+            [](tsl::gfx::Renderer* r, s32, s32, s32, s32) {
+                r->clearScreen();
+
+                if (!g_directHudActive)
+                    return;
+
+                std::vector<TranslationRegion> regions;
+                {
+                    std::lock_guard<std::mutex> lk(g_resultMutex);
+                    regions = g_translationRegions;
+                }
+
+                if (regions.empty())
+                    return;
+
+                const auto& region = regions.front();
+
+                if (region.translated.empty())
+                    return;
+
+                s32 x = static_cast<s32>(region.x);
+                s32 y = static_cast<s32>(region.y);
+                s32 w = static_cast<s32>(region.w);
+                s32 h = static_cast<s32>(region.h);
+
+                x = std::max<s32>(0, std::min<s32>(1279, x));
+                y = std::max<s32>(0, std::min<s32>(719, y));
+                w = std::min<s32>(w, 1280 - x);
+                h = std::min<s32>(h, 720 - y);
+
+                if (w < 8 || h < 8)
+                    return;
+
+                r->drawRect(
+                    x,
+                    y,
+                    w,
+                    h,
+                    tsl::Color(0, 0, 0, 15)
+                );
+
+                const int innerW = std::max<s32>(20, w - 16);
+                const int innerH = std::max<s32>(20, h - 8);
+
+                float fontSize = std::min<float>(
+                    28.0f,
+                    std::max<float>(12.0f, h * 0.42f)
+                );
+
+                std::vector<std::string> lines;
+                std::string normalized = region.translated;
+
+                for (char& c : normalized) {
+                    if (c == '\r' || c == '\n' || c == '\t')
+                        c = ' ';
+                }
+
+                for (; fontSize >= 12.0f; fontSize -= 2.0f) {
+                    lines.clear();
+
+                    std::string current;
+                    std::string word;
+
+                    auto flushWord = [&](const std::string& wordText) {
+                        if (wordText.empty())
+                            return;
+
+                        const std::string candidate =
+                            current.empty()
+                                ? wordText
+                                : current + " " + wordText;
+
+                        auto measured = r->drawString(
+                            candidate.c_str(),
+                            false,
+                            0,
+                            0,
+                            fontSize,
+                            tsl::Color(0, 0, 0, 0)
+                        );
+
+                        if (current.empty() ||
+                            static_cast<s32>(measured.first) <= innerW) {
+                            current = candidate;
+                        } else {
+                            lines.push_back(current);
+                            current = wordText;
+                        }
+                    };
+
+                    for (char c : normalized) {
+                        if (c == ' ') {
+                            flushWord(word);
+                            word.clear();
+                        } else {
+                            word += c;
+                        }
+                    }
+
+                    flushWord(word);
+
+                    if (!current.empty())
+                        lines.push_back(current);
+
+                    if (lines.empty())
+                        continue;
+
+                    const float lineHeight = fontSize + 3.0f;
+                    const float totalHeight =
+                        lines.size() * lineHeight;
+
+                    if (totalHeight <= innerH)
+                        break;
+                }
+
+                if (lines.empty())
+                    return;
+
+                const float lineHeight = fontSize + 3.0f;
+                const float totalHeight =
+                    lines.size() * lineHeight;
+
+                float textY =
+                    y + (h - totalHeight) * 0.5f + fontSize;
+
+                r->enableScissoring(x, y, w, h);
+
+                for (const auto& line : lines) {
+                    auto measured = r->drawString(
+                        line.c_str(),
+                        false,
+                        0,
+                        0,
+                        fontSize,
+                        tsl::Color(0, 0, 0, 0)
+                    );
+
+                    const s32 textW =
+                        static_cast<s32>(measured.first);
+
+                    const s32 textX =
+                        x + std::max<s32>(4, (w - textW) / 2);
+
+                    r->drawString(
+                        line.c_str(),
+                        false,
+                        textX,
+                        static_cast<s32>(textY),
+                        fontSize,
+                        tsl::Color(255, 255, 255, 15)
+                    );
+
+                    textY += lineHeight;
+                }
+
+                r->disableScissoring();
+            }
+        );
+
         dummy->setBoundaries(0, 0, 1280, 720);
         return dummy;
     }
-    
+
     void update() override {
+        if (g_directHudActive)
+            return;
+
         m_frames++;
-        // Menünün tamamen ekrandan kaymasını beklemek için 40 kare (~0.6 sn) bekle
+
         if (m_frames == 40) {
-            // Ekran tam temizken çekim yap
             auto shot = ScreenshotCapture::capture(65);
             g_screenshotData = std::move(shot.jpegData);
-            
-            tsl::goBack(); // ScreenshotWaitGui'yi kapat
-            tsl::changeTo<LoadingGui>(); // Kullanıcıya yükleniyor ekranını göster
+
+            tsl::goBack();
+            tsl::changeTo<LoadingGui>();
         }
     }
-    
+
     bool handleInput(u64 keysDown, u64, const HidTouchState&, HidAnalogStickState, HidAnalogStickState) override {
         return false;
     }
