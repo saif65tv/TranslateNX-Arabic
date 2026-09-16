@@ -27,9 +27,6 @@ static std::string       g_errorText;
 static std::string       g_originalText;
 static std::vector<TranslationRegion> g_translationRegions;
 
-static Thread g_aiThread;
-static std::atomic<bool> g_aiThreadRunning{false};
-static std::atomic<bool> g_aiThreadCreated{false};
 
 // ─── Yardımcı Fonksiyon: UI Çevirisi ─────────────────────────────────────
 static std::string L(const std::string& tr, const std::string& en) {
@@ -1059,10 +1056,7 @@ public:
             g_screenshotData = std::move(shot.jpegData);
             
             tsl::goBack(); // ScreenshotWaitGui'yi kapat
-
-            // Gemini-only build: never enter the legacy LoadingGui.
-            g_translating = false;
-            openGeminiHud();
+            tsl::changeTo<LoadingGui>(); // Gemini runs once, then HUD displays the result
         }
     }
     
@@ -1222,18 +1216,6 @@ static std::vector<std::string> wrapHudText(
     }
 
     return lines;
-}
-
-static void geminiTranslateThread(void* arg) {
-    auto* jpegData =
-        static_cast<std::vector<uint8_t>*>(arg);
-
-    if (jpegData) {
-        doTranslate(std::move(*jpegData));
-        delete jpegData;
-    }
-
-    g_aiThreadRunning.store(false, std::memory_order_release);
 }
 
 class GeminiHudGui : public tsl::Gui {
@@ -1396,103 +1378,9 @@ public:
     }
 
     void update() override {
-        if (m_started)
-            return;
-
-        {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-
-            // Start Translating already completed Gemini.
-            // In this case the HUD only draws the returned regions.
-            if (!g_translationRegions.empty() || !g_errorText.empty()) {
-                m_started = true;
-                return;
-            }
-
-            // If a Gemini request is already in progress, wait for it.
-            if (g_translating) {
-                return;
-            }
-
-            g_translationRegions.clear();
-            g_errorText.clear();
-            g_ocrWords.clear();
-            g_translatedLines.clear();
-            g_originalText.clear();
-        }
-
-        m_started = true;
-
-        // Reuse the screenshot captured by ScreenshotWaitGui.
-        // Only capture a new screenshot if this HUD was opened directly
-        // without a pending screenshot.
-        if (g_screenshotData.empty()) {
-            auto shot = ScreenshotCapture::capture(65);
-            g_screenshotData = std::move(shot.jpegData);
-        }
-
-        if (g_screenshotData.empty()) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Ekran görüntüsü alınamadı",
-                    "AI Error: Screenshot could not be captured"
-                );
-            return;
-        }
-
-        g_translating = true;
-
-        auto* jpegForThread =
-            new std::vector<uint8_t>(
-                std::move(g_screenshotData)
-            );
-
-        g_screenshotData.clear();
-
-        g_aiThreadRunning.store(true, std::memory_order_release);
-
-        Result rc = threadCreate(
-            &g_aiThread,
-            geminiTranslateThread,
-            jpegForThread,
-            nullptr,
-            0x8000,
-            0x2C,
-            -2
-        );
-
-        if (R_FAILED(rc)) {
-            delete jpegForThread;
-
-            g_aiThreadRunning.store(false, std::memory_order_release);
-
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
-
-            g_translating = false;
-            return;
-        }
-
-        g_aiThreadCreated.store(true, std::memory_order_release);
-
-        rc = threadStart(&g_aiThread);
-
-        if (R_FAILED(rc)) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
-
-            g_aiThreadRunning.store(false, std::memory_order_release);
-            g_translating = false;
-        }
+        // Display-only HUD.
+        // Gemini is completed by LoadingGui before this GUI is opened.
+        return;
     }
 
     bool handleInput(
@@ -1528,13 +1416,6 @@ public:
     }
 
     void exitServices() override {
-        if (g_aiThreadCreated.load(std::memory_order_acquire)) {
-            threadWaitForExit(&g_aiThread);
-            threadClose(&g_aiThread);
-            g_aiThreadCreated.store(false, std::memory_order_release);
-            g_aiThreadRunning.store(false, std::memory_order_release);
-        }
-
         HttpClient::cleanup();
     }
 
