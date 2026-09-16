@@ -1014,8 +1014,8 @@ public:
             doTranslate(std::move(g_screenshotData));
             g_screenshotData.clear();
             
-            g_directHudActive = true;
-            tsl::changeTo<ScreenshotWaitGui>();
+            tsl::goBack(); // LoadingGui'yi kapat
+            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
         }
     }
     
