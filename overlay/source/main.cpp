@@ -1103,16 +1103,24 @@ public:
         auto* translateBtn = new tsl::elm::ListItem(
             L("ترجمة يدوية", "Manual Translation")
         );
-        translateBtn->setClickListener([](u64) -> bool {
-            return true;
+        translateBtn->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                openGeminiHud(HudMode::Manual);
+                return true;
+            }
+            return false;
         });
         list->addItem(translateBtn);
 
         auto* autoTranslateBtn = new tsl::elm::ListItem(
             L("ترجمة تلقائية أثناء اللعب", "Auto Translate While Playing")
         );
-        autoTranslateBtn->setClickListener([](u64) -> bool {
-            return true;
+        autoTranslateBtn->setClickListener([](u64 keys) -> bool {
+            if (keys & HidNpadButton_A) {
+                openGeminiHud(HudMode::Automatic);
+                return true;
+            }
+            return false;
         });
         list->addItem(autoTranslateBtn);
 
