@@ -1013,7 +1013,7 @@ public:
             g_screenshotData.clear();
             
             tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            openGeminiHud(); // Display the already completed Gemini regions
         }
     }
     
@@ -1377,87 +1377,9 @@ public:
     }
 
     void update() override {
-        if (m_started)
-            return;
-
+        // Gemini was already completed synchronously by LoadingGui.
+        // This HUD only displays the completed g_translationRegions.
         m_started = true;
-
-        {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_translationRegions.clear();
-            g_errorText.clear();
-            g_ocrWords.clear();
-            g_translatedLines.clear();
-            g_originalText.clear();
-        }
-
-        auto shot = ScreenshotCapture::capture(65);
-
-        g_screenshotData =
-            std::move(shot.jpegData);
-
-        if (g_screenshotData.empty()) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Ekran görüntüsü alınamadı",
-                    "AI Error: Screenshot could not be captured"
-                );
-            return;
-        }
-
-        g_translating = true;
-
-        auto* jpegForThread =
-            new std::vector<uint8_t>(
-                std::move(g_screenshotData)
-            );
-
-        g_screenshotData.clear();
-
-        g_aiThreadRunning.store(true, std::memory_order_release);
-
-        Result rc = threadCreate(
-            &g_aiThread,
-            geminiTranslateThread,
-            jpegForThread,
-            nullptr,
-            0x8000,
-            0x2C,
-            -2
-        );
-
-        if (R_FAILED(rc)) {
-            delete jpegForThread;
-
-            g_aiThreadRunning.store(false, std::memory_order_release);
-
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
-
-            g_translating = false;
-            return;
-        }
-
-        g_aiThreadCreated.store(true, std::memory_order_release);
-
-        rc = threadStart(&g_aiThread);
-
-        if (R_FAILED(rc)) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
-
-            g_aiThreadRunning.store(false, std::memory_order_release);
-            g_translating = false;
-        }
     }
 
     bool handleInput(
