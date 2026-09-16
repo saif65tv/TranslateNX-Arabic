@@ -1230,12 +1230,13 @@ public:
 
         auto* drawer = new tsl::elm::CustomDrawer(
             [](tsl::gfx::Renderer* renderer, s32, s32, s32, s32) {
-                renderer->drawRect(
-                    100,
-                    100,
-                    200,
-                    40,
-                    tsl::Color(0, 0, 0, 15)
+                renderer->drawString(
+                    "مرحبا بالعربية",
+                    false,
+                    120,
+                    150,
+                    28.0f,
+                    tsl::Color(255, 255, 255, 15)
                 );
             }
         );
