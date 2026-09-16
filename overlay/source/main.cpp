@@ -15,6 +15,8 @@
 #include <atomic>
 #include <mutex>
 #include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <switch.h>
 
 // ─── Global durum ─────────────────────────────────────────────────────────
@@ -31,9 +33,43 @@ static Thread g_aiThread;
 static std::atomic<bool> g_aiThreadRunning{false};
 static std::atomic<bool> g_aiThreadCreated{false};
 
+// AUTO HUD PRO: one persistent HUD, one worker, no GUI swap after Gemini.
+static std::atomic<std::uint64_t> g_resultGeneration{0};
+
+enum class HudMode {
+    Manual,
+    Automatic
+};
+
+static HudMode g_hudMode = HudMode::Manual;
+
 // ─── Yardımcı Fonksiyon: UI Çevirisi ─────────────────────────────────────
 static std::string L(const std::string& tr, const std::string& en) {
     return g_config.uiLang == "EN" ? en : tr;
+}
+
+// Small sampled fingerprint: enough to detect scene/dialogue changes while
+// avoiding a full pass over the JPEG on every automatic poll.
+static std::uint64_t fingerprintScreenshot(const std::vector<std::uint8_t>& data) {
+    if (data.empty())
+        return 0;
+
+    std::uint64_t h = 1469598103934665603ULL;
+    const std::size_t samples = std::min<std::size_t>(128, data.size());
+
+    h ^= static_cast<std::uint64_t>(data.size());
+    h *= 1099511628211ULL;
+
+    for (std::size_t i = 0; i < samples; ++i) {
+        const std::size_t idx =
+            (samples <= 1)
+                ? 0
+                : (i * (data.size() - 1)) / (samples - 1);
+        h ^= static_cast<std::uint64_t>(data[idx]);
+        h *= 1099511628211ULL;
+    }
+
+    return h;
 }
 
 // ─── Forward declarations ─────────────────────────────────────────────────
@@ -41,8 +77,10 @@ class SetupGui;
 class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
+class GeminiHudGui;
 
 void reloadOverlay();
+static void openGeminiHud(HudMode mode);
 
 // ─── Arka planda çeviri yap ────────────────────────────────────────────────
 static void doTranslate(std::vector<uint8_t> jpegData) {
@@ -104,6 +142,7 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
             g_errorText = aiResult.errorMsg;
         }
 
+        g_resultGeneration.fetch_add(1, std::memory_order_release);
         g_translating = false;
         return;
     }
@@ -1061,11 +1100,23 @@ public:
 
         auto* list = new tsl::elm::List();
 
-        auto* translateBtn = new tsl::elm::ListItem(L("Çeviriye Başla", "Start Translating"));
-        translateBtn->setClickListener([](u64 keys) -> bool {
-            return false; // handleInput'da islenecek
+        auto* translateBtn = new tsl::elm::ListItem(
+            L("ترجمة يدوية", "Manual Translation")
+        );
+        translateBtn->setClickListener([](u64) -> bool {
+            openGeminiHud(HudMode::Manual);
+            return true;
         });
         list->addItem(translateBtn);
+
+        auto* autoTranslateBtn = new tsl::elm::ListItem(
+            L("ترجمة تلقائية أثناء اللعب", "Auto Translate While Playing")
+        );
+        autoTranslateBtn->setClickListener([](u64) -> bool {
+            openGeminiHud(HudMode::Automatic);
+            return true;
+        });
+        list->addItem(autoTranslateBtn);
 
         auto* helpItem = new tsl::elm::ListItem(L("Yardım & Rehber", "Help & Guide"));
         helpItem->setClickListener([](u64 keys) -> bool {
@@ -1098,21 +1149,7 @@ public:
     bool handleInput(u64 keysDown, u64,
                      const HidTouchState&,
                      HidAnalogStickState, HidAnalogStickState) override {
-        if ((keysDown & HidNpadButton_A) && !g_translating) {
-            {
-                std::lock_guard<std::mutex> lk(g_resultMutex);
-                g_translatedLines.clear();
-                g_errorText.clear();
-                g_originalText.clear();
-                g_ocrWords.clear();
-            }
-            g_translating = true;
-            
-            // Önce menüyü gizleyen wait ekranına geç
-            tsl::changeTo<ScreenshotWaitGui>(); 
-            
-            return true;
-        }
+
         if (keysDown & HidNpadButton_Y) {
             tsl::changeTo<SettingsGui>();
             return true;
@@ -1205,273 +1242,438 @@ static std::vector<std::string> wrapHudText(
     return lines;
 }
 
-static void geminiTranslateThread(void* arg) {
-    auto* jpegData =
-        static_cast<std::vector<uint8_t>*>(arg);
+struct GeminiJob {
+    std::vector<std::uint8_t> jpegData;
+    std::uint64_t screenHash = 0;
+};
 
-    if (jpegData) {
-        doTranslate(std::move(*jpegData));
-        delete jpegData;
+static void reapFinishedAiThread() {
+    if (!g_aiThreadCreated.load(std::memory_order_acquire))
+        return;
+
+    if (g_aiThreadRunning.load(std::memory_order_acquire))
+        return;
+
+    // The worker has fully returned. Reclaim the Switch thread handle before
+    // another request is created.
+    threadWaitForExit(&g_aiThread);
+    threadClose(&g_aiThread);
+    g_aiThreadCreated.store(false, std::memory_order_release);
+}
+
+static void geminiTranslateThread(void* arg) {
+    std::unique_ptr<GeminiJob> job(static_cast<GeminiJob*>(arg));
+
+    if (job) {
+        doTranslate(std::move(job->jpegData));
     }
 
     g_aiThreadRunning.store(false, std::memory_order_release);
 }
 
-class GeminiHudGui : public tsl::Gui {
-    bool m_started = false;
+static bool startGeminiJob(std::vector<std::uint8_t>&& jpegData,
+                           std::uint64_t screenHash) {
+    if (jpegData.empty())
+        return false;
 
-public:
-    tsl::elm::Element* createUI() override {
-        auto* drawer =
-            new tsl::elm::CustomDrawer(
-                [](tsl::gfx::Renderer* renderer,
-                   s32, s32, s32, s32) {
-
-                    std::vector<TranslationRegion> regions;
-
-                    {
-                        std::lock_guard<std::mutex> lk(g_resultMutex);
-                        regions = g_translationRegions;
-                    }
-
-                    if (regions.empty())
-                        return;
-
-                    // First paint opaque backgrounds over the original text.
-                    for (const auto& r : regions) {
-                        if (r.translated.empty())
-                            continue;
-
-                        s32 x = static_cast<s32>(r.x);
-                        s32 y = static_cast<s32>(r.y);
-                        s32 w = static_cast<s32>(r.w);
-                        s32 h = static_cast<s32>(r.h);
-
-                        if (w < 8 || h < 8)
-                            continue;
-
-                        x = std::max<s32>(0, std::min<s32>(1279, x));
-                        y = std::max<s32>(0, std::min<s32>(719, y));
-
-                        w = std::min<s32>(w, 1280 - x);
-                        h = std::min<s32>(h, 720 - y);
-
-                        // Fully opaque dark rectangle prevents the original
-                        // game text from showing through the Arabic overlay.
-                        renderer->drawRect(
-                            x,
-                            y,
-                            w,
-                            h,
-                            tsl::Color(0, 0, 0, 15)
-                        );
-                    }
-
-                    // Then draw Arabic only, inside each original region.
-                    for (const auto& r : regions) {
-                        if (r.translated.empty())
-                            continue;
-
-                        s32 x = static_cast<s32>(r.x);
-                        s32 y = static_cast<s32>(r.y);
-                        s32 w = static_cast<s32>(r.w);
-                        s32 h = static_cast<s32>(r.h);
-
-                        if (w < 8 || h < 8)
-                            continue;
-
-                        x = std::max<s32>(0, std::min<s32>(1279, x));
-                        y = std::max<s32>(0, std::min<s32>(719, y));
-                        w = std::min<s32>(w, 1280 - x);
-                        h = std::min<s32>(h, 720 - y);
-
-                        const int innerW = std::max<s32>(20, w - 16);
-
-                        float fontSize = std::min<float>(
-                            28.0f,
-                            std::max<float>(14.0f, h * 0.42f)
-                        );
-
-                        std::vector<std::string> lines;
-
-                        // Reduce font size until the complete translation
-                        // fits inside the original box.
-                        for (; fontSize >= 12.0f; fontSize -= 2.0f) {
-                            lines = wrapHudText(
-                                renderer,
-                                r.translated,
-                                fontSize,
-                                innerW
-                            );
-
-                            const float lineHeight = fontSize + 3.0f;
-                            const float totalHeight =
-                                lines.size() * lineHeight;
-
-                            if (totalHeight <= std::max<float>(h - 8, lineHeight))
-                                break;
-                        }
-
-                        if (lines.empty())
-                            continue;
-
-                        const float lineHeight = fontSize + 3.0f;
-                        const float totalHeight =
-                            lines.size() * lineHeight;
-
-                        float textY =
-                            y + (h - totalHeight) * 0.5f + fontSize;
-
-                        renderer->enableScissoring(
-                            x,
-                            y,
-                            w,
-                            h
-                        );
-
-                        for (const auto& line : lines) {
-                            auto measured =
-                                renderer->drawString(
-                                    line.c_str(),
-                                    false,
-                                    0,
-                                    0,
-                                    fontSize,
-                                    tsl::Color(0, 0, 0, 0)
-                                );
-
-                            const s32 textW =
-                                static_cast<s32>(measured.first);
-
-                            const s32 textX =
-                                x + std::max<s32>(
-                                    4,
-                                    (w - textW) / 2
-                                );
-
-                            renderer->drawString(
-                                line.c_str(),
-                                false,
-                                textX,
-                                static_cast<s32>(textY),
-                                fontSize,
-                                tsl::Color(255, 255, 255, 15)
-                            );
-
-                            textY += lineHeight;
-                        }
-
-                        renderer->disableScissoring();
-                    }
-                }
-            );
-
-        drawer->setBoundaries(
-            0,
-            0,
-            1280,
-            720
-        );
-
-        return drawer;
+    // Never stack Gemini jobs. One worker at a time keeps memory bounded.
+    if (g_aiThreadCreated.load(std::memory_order_acquire) ||
+        g_aiThreadRunning.load(std::memory_order_acquire)) {
+        return false;
     }
 
-    void update() override {
-        if (m_started)
+    {
+        std::lock_guard<std::mutex> lk(g_resultMutex);
+        g_translationRegions.clear();
+        g_errorText.clear();
+    }
+    g_resultGeneration.fetch_add(1, std::memory_order_release);
+
+    auto* job = new GeminiJob();
+    job->jpegData = std::move(jpegData);
+    job->screenHash = screenHash;
+
+    g_translating.store(true, std::memory_order_release);
+    g_aiThreadRunning.store(true, std::memory_order_release);
+
+    Result rc = threadCreate(
+        &g_aiThread,
+        geminiTranslateThread,
+        job,
+        nullptr,
+        0x8000,
+        0x2C,
+        -2
+    );
+
+    if (R_FAILED(rc)) {
+        delete job;
+        g_aiThreadRunning.store(false, std::memory_order_release);
+        g_translating.store(false, std::memory_order_release);
+
+        std::lock_guard<std::mutex> lk(g_resultMutex);
+        g_errorText = L(
+            "AI Hatası: Thread başlatılamadı",
+            "AI Error: Could not start translation thread"
+        );
+        g_resultGeneration.fetch_add(1, std::memory_order_release);
+        return false;
+    }
+
+    g_aiThreadCreated.store(true, std::memory_order_release);
+
+    rc = threadStart(&g_aiThread);
+    if (R_FAILED(rc)) {
+        threadClose(&g_aiThread);
+        g_aiThreadCreated.store(false, std::memory_order_release);
+        g_aiThreadRunning.store(false, std::memory_order_release);
+        g_translating.store(false, std::memory_order_release);
+
+        std::lock_guard<std::mutex> lk(g_resultMutex);
+        g_errorText = L(
+            "AI Hatası: Thread başlatılamadı",
+            "AI Error: Could not start translation thread"
+        );
+        g_resultGeneration.fetch_add(1, std::memory_order_release);
+        return false;
+    }
+
+    return true;
+}
+
+class GeminiHudGui : public tsl::Gui {
+    struct CachedRegion {
+        s32 x = 0;
+        s32 y = 0;
+        s32 w = 0;
+        s32 h = 0;
+        float fontSize = 14.0f;
+        std::vector<std::string> lines;
+    };
+
+    bool m_started = false;
+    bool m_manualSubmitted = false;
+    bool m_wasBusy = false;
+
+    std::uint32_t m_frame = 0;
+    std::uint32_t m_lastPollFrame = 0;
+    int m_stableFrames = 0;
+
+    std::uint64_t m_observedHash = 0;
+    std::uint64_t m_lastSubmittedHash = 0;
+
+    std::uint64_t m_cachedGeneration = 0;
+    bool m_cacheValid = false;
+    std::vector<CachedRegion> m_cache;
+
+    void invalidateCache() {
+        m_cache.clear();
+        m_cacheValid = false;
+    }
+
+    void rebuildRenderCache(tsl::gfx::Renderer* renderer) {
+        const std::uint64_t generation =
+            g_resultGeneration.load(std::memory_order_acquire);
+
+        if (m_cacheValid && generation == m_cachedGeneration)
             return;
 
-        m_started = true;
+        std::vector<TranslationRegion> regions;
+        {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            regions = g_translationRegions;
+        }
 
+        m_cache.clear();
+        m_cache.reserve(regions.size());
+
+        for (const auto& region : regions) {
+            if (region.translated.empty())
+                continue;
+
+            s32 x = static_cast<s32>(region.x);
+            s32 y = static_cast<s32>(region.y);
+            s32 w = static_cast<s32>(region.w);
+            s32 h = static_cast<s32>(region.h);
+
+            x = std::max<s32>(0, std::min<s32>(1279, x));
+            y = std::max<s32>(0, std::min<s32>(719, y));
+            w = std::min<s32>(w, 1280 - x);
+            h = std::min<s32>(h, 720 - y);
+
+            if (w < 8 || h < 8)
+                continue;
+
+            const int innerW = std::max<s32>(20, w - 16);
+            const int innerH = std::max<s32>(20, h - 8);
+
+            float fontSize = std::min<float>(
+                28.0f,
+                std::max<float>(12.0f, h * 0.42f)
+            );
+
+            std::vector<std::string> lines;
+            for (; fontSize >= 12.0f; fontSize -= 2.0f) {
+                lines = wrapHudText(
+                    renderer,
+                    region.translated,
+                    fontSize,
+                    innerW
+                );
+
+                const float lineHeight = fontSize + 3.0f;
+                const float totalHeight =
+                    static_cast<float>(lines.size()) * lineHeight;
+
+                if (totalHeight <= std::max<float>(innerH, lineHeight))
+                    break;
+            }
+
+            if (lines.empty())
+                continue;
+
+            CachedRegion cached;
+            cached.x = x;
+            cached.y = y;
+            cached.w = w;
+            cached.h = h;
+            cached.fontSize = fontSize;
+            cached.lines = std::move(lines);
+            m_cache.push_back(std::move(cached));
+        }
+
+        m_cachedGeneration = generation;
+        m_cacheValid = true;
+    }
+
+    bool submitCapture(std::vector<std::uint8_t>&& jpegData,
+                       std::uint64_t screenHash) {
+        if (!startGeminiJob(std::move(jpegData), screenHash))
+            return false;
+
+        m_lastSubmittedHash = screenHash;
+        m_stableFrames = 0;
+        return true;
+    }
+
+    void clearVisibleResult() {
         {
             std::lock_guard<std::mutex> lk(g_resultMutex);
             g_translationRegions.clear();
             g_errorText.clear();
-            g_ocrWords.clear();
-            g_translatedLines.clear();
-            g_originalText.clear();
         }
+        g_resultGeneration.fetch_add(1, std::memory_order_release);
+        invalidateCache();
+    }
 
-        auto shot = ScreenshotCapture::capture(65);
+public:
+    tsl::elm::Element* createUI() override {
+        auto* drawer = new tsl::elm::CustomDrawer(
+            [this](tsl::gfx::Renderer* renderer, s32, s32, s32, s32) {
+                rebuildRenderCache(renderer);
 
-        g_screenshotData =
-            std::move(shot.jpegData);
+                for (const auto& r : m_cache) {
+                    if (r.w < 8 || r.h < 8 || r.lines.empty())
+                        continue;
 
-        if (g_screenshotData.empty()) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Ekran görüntüsü alınamadı",
-                    "AI Error: Screenshot could not be captured"
-                );
-            return;
-        }
+                    // Fully opaque black box hides the original game text.
+                    renderer->drawRect(
+                        r.x,
+                        r.y,
+                        r.w,
+                        r.h,
+                        tsl::Color(0, 0, 0, 255)
+                    );
 
-        g_translating = true;
+                    const float lineHeight = r.fontSize + 3.0f;
+                    const float totalHeight =
+                        static_cast<float>(r.lines.size()) * lineHeight;
 
-        auto* jpegForThread =
-            new std::vector<uint8_t>(
-                std::move(g_screenshotData)
-            );
+                    float textY =
+                        r.y + (r.h - totalHeight) * 0.5f + r.fontSize;
 
-        g_screenshotData.clear();
+                    renderer->enableScissoring(r.x, r.y, r.w, r.h);
 
-        g_aiThreadRunning.store(true, std::memory_order_release);
+                    for (const auto& line : r.lines) {
+                        auto measured = renderer->drawString(
+                            line.c_str(),
+                            false,
+                            0,
+                            0,
+                            r.fontSize,
+                            tsl::Color(0, 0, 0, 0)
+                        );
 
-        Result rc = threadCreate(
-            &g_aiThread,
-            geminiTranslateThread,
-            jpegForThread,
-            nullptr,
-            0x8000,
-            0x2C,
-            -2
+                        const s32 textW =
+                            static_cast<s32>(measured.first);
+                        const s32 textX =
+                            r.x + std::max<s32>(4, (r.w - textW) / 2);
+
+                        renderer->drawString(
+                            line.c_str(),
+                            false,
+                            textX,
+                            static_cast<s32>(textY),
+                            r.fontSize,
+                            tsl::Color(255, 255, 255, 255)
+                        );
+
+                        textY += lineHeight;
+                    }
+
+                    renderer->disableScissoring();
+                }
+            }
         );
 
-        if (R_FAILED(rc)) {
-            delete jpegForThread;
+        drawer->setBoundaries(0, 0, 1280, 720);
+        return drawer;
+    }
 
-            g_aiThreadRunning.store(false, std::memory_order_release);
+    void update() override {
+        ++m_frame;
+        reapFinishedAiThread();
 
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
+        if (!m_started) {
+            m_started = true;
+            m_frame = 0;
+            m_lastPollFrame = 0;
+            m_stableFrames = 0;
+            m_observedHash = 0;
+            m_lastSubmittedHash = 0;
+            m_manualSubmitted = false;
+            m_wasBusy = false;
+            invalidateCache();
 
-            g_translating = false;
+            clearVisibleResult();
             return;
         }
 
-        g_aiThreadCreated.store(true, std::memory_order_release);
+        const bool busy =
+            g_aiThreadRunning.load(std::memory_order_acquire) ||
+            g_translating.load(std::memory_order_acquire);
 
-        rc = threadStart(&g_aiThread);
+        const bool justFinished = m_wasBusy && !busy;
+        m_wasBusy = busy;
 
-        if (R_FAILED(rc)) {
-            std::lock_guard<std::mutex> lk(g_resultMutex);
-            g_errorText =
-                L(
-                    "AI Hatası: Thread başlatılamadı",
-                    "AI Error: Could not start translation thread"
-                );
+        // Manual mode: exactly one request, no continuous polling.
+        if (g_hudMode == HudMode::Manual) {
+            if (m_manualSubmitted || busy)
+                return;
 
-            g_aiThreadRunning.store(false, std::memory_order_release);
-            g_translating = false;
+            if (m_frame < 18)
+                return;
+
+            auto shot = ScreenshotCapture::capture(65);
+            if (shot.jpegData.empty())
+                return;
+
+            const std::uint64_t hash = fingerprintScreenshot(shot.jpegData);
+            if (hash == 0)
+                return;
+
+            m_manualSubmitted = submitCapture(
+                std::move(shot.jpegData),
+                hash
+            );
+            return;
         }
+
+        // Automatic mode: never stack requests.
+        if (busy)
+            return;
+
+        // Immediately after Gemini returns, verify the screen is still the
+        // screen we translated. If it changed, discard that result and start
+        // observing the new screen instead of showing stale dialogue.
+        if (justFinished) {
+            auto shot = ScreenshotCapture::capture(65);
+            if (!shot.jpegData.empty()) {
+                const std::uint64_t currentHash =
+                    fingerprintScreenshot(shot.jpegData);
+
+                if (currentHash != m_lastSubmittedHash) {
+                    clearVisibleResult();
+                    m_observedHash = currentHash;
+                    m_stableFrames = 1;
+                    m_lastPollFrame = m_frame;
+                    return;
+                }
+
+                // The translated screen is still current. Do not immediately
+                // capture a second JPEG in this same update cycle.
+                m_lastPollFrame = m_frame;
+                return;
+            }
+
+            // If verification capture failed, wait for the next poll instead
+            // of immediately retrying every frame.
+            m_lastPollFrame = m_frame;
+            return;
+        }
+
+        if (m_frame < 18)
+            return;
+
+        // ~166ms polling at 60fps. Two equal observations produce roughly
+        // 330ms debounce before a request is sent.
+        constexpr std::uint32_t POLL_INTERVAL_FRAMES = 30;
+
+        if (m_lastPollFrame != 0 &&
+            (m_frame - m_lastPollFrame) < POLL_INTERVAL_FRAMES) {
+            return;
+        }
+
+        m_lastPollFrame = m_frame;
+
+        auto shot = ScreenshotCapture::capture(65);
+        if (shot.jpegData.empty())
+            return;
+
+        const std::uint64_t currentHash =
+            fingerprintScreenshot(shot.jpegData);
+        if (currentHash == 0)
+            return;
+
+        if (currentHash != m_observedHash) {
+            m_observedHash = currentHash;
+            m_stableFrames = 1;
+        } else {
+            ++m_stableFrames;
+        }
+
+        if (m_stableFrames < 2)
+            return;
+
+        if (currentHash == m_lastSubmittedHash)
+            return;
+
+        submitCapture(std::move(shot.jpegData), currentHash);
     }
 
     bool handleInput(
-        u64,
+        u64 keysDown,
         u64,
         const HidTouchState&,
         HidAnalogStickState,
         HidAnalogStickState
     ) override {
-        // Do not turn the HUD into a menu.
-        // Returning false lets the game remain interactive underneath.
+        // B returns to the TranslateNX menu only in manual mode. In automatic
+        // mode all gameplay input is passed through to the game.
+        if (g_hudMode == HudMode::Manual &&
+            (keysDown & HidNpadButton_B)) {
+            tsl::changeTo<TranslateGui>();
+            return true;
+        }
+
         return false;
     }
 };
+
+static void openGeminiHud(HudMode mode) {
+    g_hudMode = mode;
+    tsl::changeTo<GeminiHudGui>();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OVERLAY GİRİŞ NOKTASI
