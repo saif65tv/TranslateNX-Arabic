@@ -1104,7 +1104,6 @@ public:
             L("ترجمة يدوية", "Manual Translation")
         );
         translateBtn->setClickListener([](u64) -> bool {
-            openGeminiHud(HudMode::Manual);
             return true;
         });
         list->addItem(translateBtn);
@@ -1113,7 +1112,6 @@ public:
             L("ترجمة تلقائية أثناء اللعب", "Auto Translate While Playing")
         );
         autoTranslateBtn->setClickListener([](u64) -> bool {
-            openGeminiHud(HudMode::Automatic);
             return true;
         });
         list->addItem(autoTranslateBtn);
