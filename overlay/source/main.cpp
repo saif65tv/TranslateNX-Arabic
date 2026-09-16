@@ -1060,12 +1060,13 @@ public:
             doTranslate(std::move(g_screenshotData));
             g_screenshotData.clear();
             
-            tsl::goBack(); // LoadingGui'yi kapat
             if (g_config.appMode == AppMode::AI) {
+                // Replace LoadingGui directly. Do not goBack() first.
                 // Gemini already completed synchronously in doTranslate().
                 // GeminiHudGui will only display the returned regions.
                 openGeminiHud();
             } else {
+                tsl::goBack(); // LoadingGui'yi kapat
                 tsl::changeTo<TranslationResultGui>();
             }
         }
