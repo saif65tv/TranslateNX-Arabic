@@ -1706,13 +1706,8 @@ public:
         g_config = ConfigManager::load();
         ult::useHapticFeedback = false; // Titreşimi tamamen kapat
 
-        // Direct "translate" launch:
-        // no settings/menu, start Gemini HUD directly.
-        if (lastOverlayMode == "translate") {
-            return initially<GeminiHudGui>();
-        }
-
-        // Normal launch: keep the regular settings/menu interface.
+        // Always show the TranslateNX menu first.
+        // The user chooses Manual or Automatic translation explicitly.
         return initially<TranslateGui>();
     }
 };
