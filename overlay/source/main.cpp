@@ -1574,7 +1574,7 @@ public:
 
         // Direct "translate" launch:
         // no settings/menu, start Gemini HUD directly.
-        if (ult::lastOverlayMode == "translate") {
+        if (lastOverlayMode == "translate") {
             return initially<ScreenshotWaitGui>();
         }
 
