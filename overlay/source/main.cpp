@@ -42,8 +42,10 @@ class TranslateGui;
 class SettingsGui;
 class OnScreenOverlayGui;
 class ScreenshotWaitGui;
+class GeminiHudGui;
 
 void reloadOverlay();
+static void showGeminiHud();
 
 // ─── Arka planda çeviri yap ────────────────────────────────────────────────
 static void doTranslate(std::vector<uint8_t> jpegData) {
@@ -1014,8 +1016,7 @@ public:
             doTranslate(std::move(g_screenshotData));
             g_screenshotData.clear();
             
-            tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            showGeminiHud();
         }
     }
     
@@ -1537,6 +1538,9 @@ public:
     }
 
     void update() override {
+        if (g_directHudActive)
+            return;
+
         if (m_started)
             return;
 
@@ -1632,6 +1636,11 @@ public:
         return false;
     }
 };
+
+static void showGeminiHud() {
+    g_directHudActive = true;
+    tsl::changeTo<GeminiHudGui>();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OVERLAY GİRİŞ NOKTASI
