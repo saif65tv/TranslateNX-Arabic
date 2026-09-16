@@ -1038,6 +1038,7 @@ public:
 };
 
 // ─── Global olarak çekilen fotoğrafı saklayalım ───────────────────────────
+static void openGeminiHud();
 static std::vector<uint8_t> g_screenshotData;
 
 class LoadingGui : public tsl::Gui {
@@ -1060,7 +1061,13 @@ public:
             g_screenshotData.clear();
             
             tsl::goBack(); // LoadingGui'yi kapat
-            tsl::changeTo<TranslationResultGui>(); // Sonuclari goster
+            if (g_config.appMode == AppMode::AI) {
+                // Gemini already completed synchronously in doTranslate().
+                // GeminiHudGui will only display the returned regions.
+                openGeminiHud();
+            } else {
+                tsl::changeTo<TranslationResultGui>();
+            }
         }
     }
     
@@ -1428,6 +1435,16 @@ public:
         if (m_started)
             return;
 
+        {
+            std::lock_guard<std::mutex> lk(g_resultMutex);
+            // LoadingGui has already completed Gemini.
+            // Keep the regions and do not start Gemini again.
+            if (!g_translationRegions.empty() || !g_errorText.empty()) {
+                m_started = true;
+                return;
+            }
+        }
+
         m_started = true;
 
         {
@@ -1529,6 +1546,10 @@ void reloadOverlay() {
     tsl::swapTo<TranslateGui>(SwapDepth(10));
 }
 
+static void openGeminiHud() {
+    tsl::changeTo<GeminiHudGui>();
+}
+
 class TranslateOverlay : public tsl::Overlay {
 public:
     void initServices() override {
@@ -1554,7 +1575,7 @@ public:
         // Direct "translate" launch:
         // no settings/menu, start Gemini HUD directly.
         if (ult::lastOverlayMode == "translate") {
-            return initially<GeminiHudGui>();
+            return initially<ScreenshotWaitGui>();
         }
 
         // Normal launch: keep the regular settings/menu interface.
