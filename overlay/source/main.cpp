@@ -1540,6 +1540,10 @@ public:
         ++m_frame;
         reapFinishedAiThread();
 
+        // FINAL DIAGNOSTIC: disable all screenshot capture.
+        // This isolates the crash to the capture path if the HUD remains stable.
+        return;
+
         if (!m_started) {
             m_started = true;
             m_frame = 0;
