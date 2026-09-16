@@ -77,7 +77,13 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
         }
 
         TranslateResult aiResult =
-            Translate::runGeminiAI(jpegData, g_config.geminiApiKey, g_config.dstLang);
+            Translate::runGeminiAI(
+                jpegData,
+                g_config.geminiApiKey,
+                g_config.dstLang,
+                g_config.geminiModel,
+                g_config.geminiThinking
+            );
 
         std::lock_guard<std::mutex> lk(g_resultMutex);
 
@@ -173,6 +179,7 @@ static void doTranslate(std::vector<uint8_t> jpegData) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 std::string getLanguageName(const std::string& code) {
+    if (code == "AR") return L("العربية", "Arabic");
     if (code == "TR") return L("Türkçe", "Turkish");
     if (code == "EN") return L("İngilizce", "English");
     if (code == "JA") return L("Japonca", "Japanese");
@@ -238,6 +245,114 @@ public:
         return frame;
     }
 };
+
+
+class GeminiModelSelectGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("Gemini Model", "Gemini Model"),
+            L("[B] Geri", "[B] Back")
+        );
+
+        auto* list = new tsl::elm::List();
+
+        struct ModelOption {
+            const char* id;
+            const char* label;
+        };
+
+        const ModelOption models[] = {
+            {"gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"},
+            {"gemini-3.5-flash", "Gemini 3.5 Flash"},
+            {"gemini-3.6-flash", "Gemini 3.6 Flash"},
+            {"gemini-3.7-flash", "Gemini 3.7 Flash"},
+            {"gemini-3.8-flash", "Gemini 3.8 Flash"},
+            {"gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"}
+        };
+
+        for (const auto& model : models) {
+            auto* item = new tsl::elm::ListItem(model.label);
+
+            item->setClickListener([model](u64 keys) -> bool {
+                if (keys & HidNpadButton_A) {
+                    g_config.geminiModel = model.id;
+
+                    // 3.7/3.8 do not support minimal.
+                    if ((g_config.geminiModel == "gemini-3.7-flash" ||
+                         g_config.geminiModel == "gemini-3.8-flash") &&
+                        g_config.geminiThinking == "minimal") {
+                        g_config.geminiThinking = "low";
+                    }
+
+                    ConfigManager::save(g_config);
+                    tsl::goBack();
+                    return true;
+                }
+
+                return false;
+            });
+
+            list->addItem(item);
+        }
+
+        frame->setContent(list);
+        return frame;
+    }
+};
+
+
+class GeminiThinkingSelectGui : public tsl::Gui {
+public:
+    tsl::elm::Element* createUI() override {
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("Gemini Thinking", "Gemini Thinking"),
+            L("[B] Geri", "[B] Back")
+        );
+
+        auto* list = new tsl::elm::List();
+
+        struct ThinkingOption {
+            const char* id;
+            const char* label;
+        };
+
+        const bool supportsMinimal =
+            g_config.geminiModel != "gemini-3.7-flash" &&
+            g_config.geminiModel != "gemini-3.8-flash";
+
+        const ThinkingOption options[] = {
+            {"minimal", "Minimal - Fastest"},
+            {"low", "Low - Fast"},
+            {"medium", "Medium - Balanced"},
+            {"high", "High - Quality"}
+        };
+
+        for (const auto& option : options) {
+            if (!supportsMinimal && std::string(option.id) == "minimal")
+                continue;
+
+            auto* item = new tsl::elm::ListItem(option.label);
+
+            item->setClickListener([option](u64 keys) -> bool {
+                if (keys & HidNpadButton_A) {
+                    g_config.geminiThinking = option.id;
+                    ConfigManager::save(g_config);
+                    tsl::goBack();
+                    return true;
+                }
+
+                return false;
+            });
+
+            list->addItem(item);
+        }
+
+        frame->setContent(list);
+        return frame;
+    }
+};
+
 
 class AppModeSelectGui : public tsl::Gui {
 public:
@@ -388,7 +503,7 @@ public:
         auto* list  = new tsl::elm::List();
 
         std::vector<std::string> langs = {
-            "TR", "EN", "JA", "KO", "ZH", "DE", "FR", "ES", "IT", "RU", 
+            "AR", "TR", "EN", "JA", "KO", "ZH", "DE", "FR", "ES", "IT", "RU",
             "BG", "CS", "DA", "NL", "FI", "EL", "HU", "PL", "PT", "SL", "SV"
         };
 
@@ -421,101 +536,107 @@ public:
 class HelpGui;
 
 class SettingsGui : public tsl::Gui {
-    tsl::elm::ListItem* m_modeItem = nullptr;
-    tsl::elm::ListItem* m_ocrApiItem = nullptr;
-    tsl::elm::ListItem* m_transApiItem = nullptr;
+    tsl::elm::ListItem* m_geminiModelItem = nullptr;
+    tsl::elm::ListItem* m_geminiThinkingItem = nullptr;
     tsl::elm::ListItem* m_srcItem = nullptr;
     tsl::elm::ListItem* m_dstItem = nullptr;
     tsl::elm::ListItem* m_uiLangItem = nullptr;
 
     void update() override {
-        if (m_modeItem) {
-            m_modeItem->setValue(
-                g_config.appMode == AppMode::AI ? "AI Mode" : "Classic Mode"
-            );
+        if (m_geminiModelItem)
+            m_geminiModelItem->setValue(g_config.geminiModel);
+
+        if (m_geminiThinkingItem) {
+            std::string thinking = g_config.geminiThinking;
+
+            if (thinking == "minimal")
+                thinking = "Minimal - Fastest";
+            else if (thinking == "low")
+                thinking = "Low - Fast";
+            else if (thinking == "medium")
+                thinking = "Medium - Balanced";
+            else if (thinking == "high")
+                thinking = "High - Quality";
+
+            m_geminiThinkingItem->setValue(thinking);
         }
 
-        if (m_srcItem) m_srcItem->setValue(getLanguageName(g_config.srcLang));
-        if (m_dstItem) m_dstItem->setValue(getLanguageName(g_config.dstLang));
-        if (m_uiLangItem) m_uiLangItem->setValue(g_config.uiLang == "EN" ? "English" : "Türkçe");
-        
-        if (m_ocrApiItem) {
-            if (g_config.ocrApi == OcrApi::GoogleVision) m_ocrApiItem->setValue("Google Vision");
-            else m_ocrApiItem->setValue("OCR.space");
-        }
-        if (m_transApiItem) {
-            if (g_config.translateApi == TranslateApi::DeepL) m_transApiItem->setValue("DeepL");
-            else if (g_config.translateApi == TranslateApi::GoogleCloud) m_transApiItem->setValue("Google Cloud");
-            else m_transApiItem->setValue("MyMemory");
-        }
+        if (m_srcItem)
+            m_srcItem->setValue(getLanguageName(g_config.srcLang));
+
+        if (m_dstItem)
+            m_dstItem->setValue(getLanguageName(g_config.dstLang));
+
+        if (m_uiLangItem)
+            m_uiLangItem->setValue(
+                g_config.uiLang == "EN" ? "English" : "Türkçe"
+            );
     }
 
 public:
     tsl::elm::Element* createUI() override {
-        auto* frame = new tsl::elm::OverlayFrame(L("Ayarlar", "Settings"), L("[B] Geri", "[B] Back"));
-        auto* list  = new tsl::elm::List();
-
-        list->addItem(new tsl::elm::CategoryHeader(L("MODE AYARLARI", "MODE SETTINGS")));
-
-        m_modeItem = new tsl::elm::ListItem(
-            L("Çeviri Modu", "Translation Mode")
+        auto* frame = new tsl::elm::OverlayFrame(
+            L("TranslateNX - Gemini", "TranslateNX - Gemini"),
+            L("[B] Geri", "[B] Back")
         );
 
-        m_modeItem->setClickListener([](u64 keys) -> bool {
+        auto* list = new tsl::elm::List();
+
+        // ─────────────────────────────────────────────
+        // GEMINI SETTINGS
+        // ─────────────────────────────────────────────
+        list->addItem(new tsl::elm::CategoryHeader(
+            "GEMINI SETTINGS"
+        ));
+
+        m_geminiModelItem = new tsl::elm::ListItem(
+            "Gemini Model"
+        );
+        m_geminiModelItem->setValue(g_config.geminiModel);
+        m_geminiModelItem->setClickListener([](u64 keys) -> bool {
             if (keys & HidNpadButton_A) {
-                tsl::changeTo<AppModeSelectGui>();
+                tsl::changeTo<GeminiModelSelectGui>();
                 return true;
             }
             return false;
         });
+        list->addItem(m_geminiModelItem);
 
-        list->addItem(m_modeItem);
+        m_geminiThinkingItem = new tsl::elm::ListItem(
+            "Thinking / Speed"
+        );
 
-        if (g_config.appMode == AppMode::AI) {
-            auto* aiApiItem = new tsl::elm::ListItem(
-                L("AI Sağlayıcı", "AI Provider")
-            );
+        if (g_config.geminiThinking == "minimal")
+            m_geminiThinkingItem->setValue("Minimal - Fastest");
+        else if (g_config.geminiThinking == "low")
+            m_geminiThinkingItem->setValue("Low - Fast");
+        else if (g_config.geminiThinking == "medium")
+            m_geminiThinkingItem->setValue("Medium - Balanced");
+        else if (g_config.geminiThinking == "high")
+            m_geminiThinkingItem->setValue("High - Quality");
+        else
+            m_geminiThinkingItem->setValue(g_config.geminiThinking);
 
-            aiApiItem->setValue(
-                g_config.aiApi == AiApi::Puter ? "Puter AI" : "Gemini AI"
-            );
-
-            aiApiItem->setClickListener([](u64 keys) -> bool {
-                if (keys & HidNpadButton_A) {
-                    tsl::changeTo<AiApiSelectGui>();
-                    return true;
-                }
-                return false;
-            });
-
-            list->addItem(aiApiItem);
-        }
-
-        list->addItem(new tsl::elm::CategoryHeader(L("API AYARLARI", "API SETTINGS")));
-
-        m_ocrApiItem = new tsl::elm::ListItem("OCR API");
-        m_ocrApiItem->setClickListener([](u64 keys) -> bool {
+        m_geminiThinkingItem->setClickListener([](u64 keys) -> bool {
             if (keys & HidNpadButton_A) {
-                tsl::changeTo<OcrApiSelectGui>();
+                tsl::changeTo<GeminiThinkingSelectGui>();
                 return true;
             }
             return false;
         });
-        list->addItem(m_ocrApiItem);
+        list->addItem(m_geminiThinkingItem);
 
-        m_transApiItem = new tsl::elm::ListItem(L("Çeviri API", "Translate API"));
-        m_transApiItem->setClickListener([](u64 keys) -> bool {
-            if (keys & HidNpadButton_A) {
-                tsl::changeTo<TranslateApiSelectGui>();
-                return true;
-            }
-            return false;
-        });
-        list->addItem(m_transApiItem);
+        // ─────────────────────────────────────────────
+        // LANGUAGE SETTINGS
+        // ─────────────────────────────────────────────
+        list->addItem(new tsl::elm::CategoryHeader(
+            "LANGUAGE SETTINGS"
+        ));
 
-        list->addItem(new tsl::elm::CategoryHeader(L("DİL AYARLARI", "LANGUAGE SETTINGS")));
-
-        m_srcItem = new tsl::elm::ListItem(L("Kaynak Dil", "Source Lang"));
+        m_srcItem = new tsl::elm::ListItem(
+            "Source Language"
+        );
+        m_srcItem->setValue(getLanguageName(g_config.srcLang));
         m_srcItem->setClickListener([](u64 keys) -> bool {
             if (keys & HidNpadButton_A) {
                 tsl::changeTo<LanguageSelectGui>(true);
@@ -525,7 +646,10 @@ public:
         });
         list->addItem(m_srcItem);
 
-        m_dstItem = new tsl::elm::ListItem(L("Hedef Dil", "Target Lang"));
+        m_dstItem = new tsl::elm::ListItem(
+            "Target Language"
+        );
+        m_dstItem->setValue(getLanguageName(g_config.dstLang));
         m_dstItem->setClickListener([](u64 keys) -> bool {
             if (keys & HidNpadButton_A) {
                 tsl::changeTo<LanguageSelectGui>(false);
@@ -535,7 +659,42 @@ public:
         });
         list->addItem(m_dstItem);
 
-        m_uiLangItem = new tsl::elm::ListItem(L("Arayüz Dili", "UI Language"));
+        // ─────────────────────────────────────────────
+        // GEMINI API
+        // ─────────────────────────────────────────────
+        list->addItem(new tsl::elm::CategoryHeader(
+            "GEMINI API"
+        ));
+
+        auto* geminiKeyItem = new tsl::elm::ListItem(
+            "Gemini API Key"
+        );
+
+        geminiKeyItem->setValue(
+            g_config.geminiApiKey.empty() ? "None" : "✓ Set"
+        );
+
+        geminiKeyItem->setValueColor(
+            g_config.geminiApiKey.empty()
+                ? tsl::Color(120, 120, 120, 255)
+                : tsl::Color(0, 220, 0, 255)
+        );
+
+        list->addItem(geminiKeyItem);
+
+        // ─────────────────────────────────────────────
+        // INTERFACE
+        // ─────────────────────────────────────────────
+        list->addItem(new tsl::elm::CategoryHeader(
+            "INTERFACE"
+        ));
+
+        m_uiLangItem = new tsl::elm::ListItem(
+            "UI Language"
+        );
+        m_uiLangItem->setValue(
+            g_config.uiLang == "EN" ? "English" : "Türkçe"
+        );
         m_uiLangItem->setClickListener([](u64 keys) -> bool {
             if (keys & HidNpadButton_A) {
                 tsl::changeTo<UiLanguageSelectGui>();
@@ -545,29 +704,12 @@ public:
         });
         list->addItem(m_uiLangItem);
 
-        list->addItem(new tsl::elm::CategoryHeader(L("OCR API ANAHTARLARI", "OCR API KEYS")));
-
-        auto* editOcrItem = new tsl::elm::ListItem("OCR.space API Key");
-        editOcrItem->setValue(g_config.ocrApiKey.empty() ? L("Pasif", "None") : L("Aktif", "Set"));
-        editOcrItem->setValueColor(g_config.ocrApiKey.empty() ? tsl::Color(15, 0, 0, 15) : tsl::Color(0, 15, 0, 15));
-        list->addItem(editOcrItem);
-
-        auto* editVisItem = new tsl::elm::ListItem("Google Vision API Key");
-        editVisItem->setValue(g_config.visionApiKey.empty() ? L("Pasif", "None") : L("Aktif", "Set"));
-        editVisItem->setValueColor(g_config.visionApiKey.empty() ? tsl::Color(15, 0, 0, 15) : tsl::Color(0, 15, 0, 15));
-        list->addItem(editVisItem);
-
-        list->addItem(new tsl::elm::CategoryHeader(L("ÇEVİRİ API ANAHTARLARI", "TRANSLATE API KEYS")));
-
-        auto* editDeeplItem = new tsl::elm::ListItem("DeepL API Key");
-        editDeeplItem->setValue(g_config.deeplApiKey.empty() ? L("Pasif", "None") : L("Aktif", "Set"));
-        editDeeplItem->setValueColor(g_config.deeplApiKey.empty() ? tsl::Color(15, 0, 0, 15) : tsl::Color(0, 15, 0, 15));
-        list->addItem(editDeeplItem);
-
-        auto* editGoogleTransItem = new tsl::elm::ListItem("Google Cloud API Key");
-        editGoogleTransItem->setValue(g_config.googleTransApiKey.empty() ? L("Pasif", "None") : L("Aktif", "Set"));
-        editGoogleTransItem->setValueColor(g_config.googleTransApiKey.empty() ? tsl::Color(15, 0, 0, 15) : tsl::Color(0, 15, 0, 15));
-        list->addItem(editGoogleTransItem);
+        // ─────────────────────────────────────────────
+        // CREDIT
+        // ─────────────────────────────────────────────
+        list->addItem(new tsl::elm::CategoryHeader(
+            "Modified by Saif"
+        ));
 
         frame->setContent(list);
         return frame;

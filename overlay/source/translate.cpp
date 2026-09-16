@@ -316,7 +316,9 @@ static std::string encodeBase64(const std::vector<uint8_t>& data) {
 TranslateResult runGeminiAI(
     const std::vector<uint8_t>& jpegData,
     const std::string& apiKey,
-    const std::string& targetLang
+    const std::string& targetLang,
+    const std::string& model,
+    const std::string& thinkingLevel
 ) {
     TranslateResult result;
 
@@ -360,15 +362,56 @@ TranslateResult runGeminiAI(
     cJSON_AddItemToArray(contents, content);
     cJSON_AddItemToObject(root, "contents", contents);
 
+    std::string effectiveThinking = thinkingLevel;
+
+    if ((model == "gemini-3.7-flash" ||
+         model == "gemini-3.8-flash") &&
+        effectiveThinking == "minimal") {
+        effectiveThinking = "low";
+    }
+
+    if (effectiveThinking != "minimal" &&
+        effectiveThinking != "low" &&
+        effectiveThinking != "medium" &&
+        effectiveThinking != "high") {
+        effectiveThinking = "minimal";
+    }
+
+    cJSON* generationConfig = cJSON_CreateObject();
+    cJSON* thinkingConfig = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(
+        thinkingConfig,
+        "thinkingLevel",
+        effectiveThinking.c_str()
+    );
+
+    cJSON_AddItemToObject(
+        generationConfig,
+        "thinkingConfig",
+        thinkingConfig
+    );
+
+    cJSON_AddItemToObject(
+        root,
+        "generationConfig",
+        generationConfig
+    );
+
     char* json = cJSON_PrintUnformatted(root);
     std::string body(json ? json : "");
     if (json)
         free(json);
     cJSON_Delete(root);
 
+    std::string selectedModel = model;
+    if (selectedModel.empty())
+        selectedModel = "gemini-3.1-flash-lite";
+
     std::string url =
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-3.1-flash-lite:generateContent?key=" + apiKey;
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        selectedModel +
+        ":generateContent?key=" + apiKey;
 
     HttpResponse resp;
 

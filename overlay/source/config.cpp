@@ -54,6 +54,8 @@ Config load() {
             fprintf(f, "google_trans_api_key=\n");
             fprintf(f, "puter_api_key=\n");
             fprintf(f, "gemini_api_key=\n");
+            fprintf(f, "gemini_model=gemini-3.1-flash-lite\n");
+            fprintf(f, "gemini_thinking=minimal\n");
             fclose(f);
         }
     } else {
@@ -92,10 +94,14 @@ Config load() {
     cfg.googleTransApiKey = iniGet(CONFIG_PATH, "google_trans_api_key");
     cfg.puterApiKey       = iniGet(CONFIG_PATH, "puter_api_key");
     cfg.geminiApiKey      = iniGet(CONFIG_PATH, "gemini_api_key");
+    cfg.geminiModel       = iniGet(CONFIG_PATH, "gemini_model");
+    cfg.geminiThinking    = iniGet(CONFIG_PATH, "gemini_thinking");
 
     if (cfg.srcLang.empty()) cfg.srcLang = "en";
     if (cfg.dstLang.empty()) cfg.dstLang = "tr";
     if (cfg.uiLang.empty())  cfg.uiLang = "en";
+    if (cfg.geminiModel.empty()) cfg.geminiModel = "gemini-3.1-flash-lite";
+    if (cfg.geminiThinking.empty()) cfg.geminiThinking = "minimal";
     
     for (auto & c: cfg.srcLang) c = toupper((unsigned char)c);
     for (auto & c: cfg.dstLang) c = toupper((unsigned char)c);
@@ -111,6 +117,9 @@ void save(const Config& cfg) {
     FILE* f = fopen(CONFIG_PATH, "r");
     std::vector<std::string> lines;
     bool foundOcrApi = false, foundTransApi = false, foundSrc = false, foundDst = false, foundUi = false;
+    bool hasAppMode = false, hasAiApi = false;
+    bool hasPuterKey = false, hasGeminiKey = false;
+    bool hasGeminiModel = false, hasGeminiThinking = false;
     
     const char* appModeStr = (cfg.appMode == AppMode::AI) ? "ai" : "classic";
     const char* aiApiStr   = (cfg.aiApi == AiApi::Puter) ? "puter" : "gemini";
@@ -144,6 +153,8 @@ void save(const Config& cfg) {
                 if (lkey == "src_lang" || lkey == "source_lang") { lines.push_back("src_lang=" + sl + "\n"); foundSrc = true; continue; }
                 if (lkey == "dst_lang" || lkey == "target_lang") { lines.push_back("dst_lang=" + dl + "\n"); foundDst = true; continue; }
                 if (lkey == "ui_lang") { lines.push_back("ui_lang=" + ul + "\n"); foundUi = true; continue; }
+            if (lkey == "gemini_model") { lines.push_back("gemini_model=" + cfg.geminiModel + "\n"); hasGeminiModel = true; continue; }
+            if (lkey == "gemini_thinking") { lines.push_back("gemini_thinking=" + cfg.geminiThinking + "\n"); hasGeminiThinking = true; continue; }
             }
             lines.push_back(s);
         }
@@ -160,20 +171,21 @@ void save(const Config& cfg) {
     if (!foundDst) lines.push_back("dst_lang=" + dl + "\n");
     if (!foundUi) lines.push_back("ui_lang=" + ul + "\n");
 
-    bool hasAppMode = false, hasAiApi = false;
-    bool hasPuterKey = false, hasGeminiKey = false;
-
     for (const auto& line : lines) {
         if (line.rfind("app_mode=", 0) == 0) hasAppMode = true;
         if (line.rfind("ai_api=", 0) == 0) hasAiApi = true;
         if (line.rfind("puter_api_key=", 0) == 0) hasPuterKey = true;
         if (line.rfind("gemini_api_key=", 0) == 0) hasGeminiKey = true;
+        if (line.rfind("gemini_model=", 0) == 0) hasGeminiModel = true;
+        if (line.rfind("gemini_thinking=", 0) == 0) hasGeminiThinking = true;
     }
 
     if (!hasAppMode) lines.push_back("app_mode=" + std::string(appModeStr) + "\n");
     if (!hasAiApi) lines.push_back("ai_api=" + std::string(aiApiStr) + "\n");
     if (!hasPuterKey) lines.push_back("puter_api_key=" + cfg.puterApiKey + "\n");
     if (!hasGeminiKey) lines.push_back("gemini_api_key=" + cfg.geminiApiKey + "\n");
+    if (!hasGeminiModel) lines.push_back("gemini_model=" + cfg.geminiModel + "\n");
+    if (!hasGeminiThinking) lines.push_back("gemini_thinking=" + cfg.geminiThinking + "\n");
 
     f = fopen(CONFIG_PATH, "w");
     if (f) {
