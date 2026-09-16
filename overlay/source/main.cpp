@@ -81,6 +81,7 @@ class GeminiHudGui;
 
 void reloadOverlay();
 static void openGeminiHud(HudMode mode);
+static bool startGeminiJob(std::vector<std::uint8_t>&& jpegData, std::uint64_t screenHash);
 
 // ─── Arka planda çeviri yap ────────────────────────────────────────────────
 static void doTranslate(std::vector<uint8_t> jpegData) {
@@ -1063,30 +1064,74 @@ public:
 
 class ScreenshotWaitGui : public tsl::Gui {
     int m_frames = 0;
+
 public:
     tsl::elm::Element* createUI() override {
-        // Tamamen seffaf element, menuyu gizler
-        auto* dummy = new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* r, s32, s32, s32, s32){
-            r->clearScreen();
-        });
+        auto* dummy = new tsl::elm::CustomDrawer(
+            [](tsl::gfx::Renderer* r, s32, s32, s32, s32) {
+                // Hide Tesla while the game's screenshot is captured.
+                r->clearScreen();
+            }
+        );
+
         dummy->setBoundaries(0, 0, 1280, 720);
         return dummy;
     }
-    
+
     void update() override {
-        m_frames++;
-        // Menünün tamamen ekrandan kaymasını beklemek için 40 kare (~0.6 sn) bekle
-        if (m_frames == 40) {
-            // Ekran tam temizken çekim yap
-            auto shot = ScreenshotCapture::capture(65);
-            g_screenshotData = std::move(shot.jpegData);
-            
-            tsl::goBack(); // ScreenshotWaitGui'yi kapat
-            tsl::changeTo<LoadingGui>(); // Kullanıcıya yükleniyor ekranını göster
+        ++m_frames;
+
+        // Give Tesla several frames to disappear completely before capture.
+        // This avoids capturing while the HUD/menu is being switched.
+        if (m_frames < 8)
+            return;
+
+        auto shot = ScreenshotCapture::capture(65);
+
+        if (shot.jpegData.empty()) {
+            tsl::changeTo<GeminiHudGui>();
+            return;
         }
+
+        const std::uint64_t screenHash =
+            fingerprintScreenshot(shot.jpegData);
+
+        if (screenHash == 0) {
+            tsl::changeTo<GeminiHudGui>();
+            return;
+        }
+
+        // In automatic mode, do not translate the exact same screen twice.
+        static std::uint64_t lastAutoSubmittedHash = 0;
+
+        if (g_hudMode == HudMode::Automatic &&
+            screenHash == lastAutoSubmittedHash) {
+            tsl::changeTo<GeminiHudGui>();
+            return;
+        }
+
+        if (!startGeminiJob(
+                std::move(shot.jpegData),
+                screenHash)) {
+            tsl::changeTo<GeminiHudGui>();
+            return;
+        }
+
+        if (g_hudMode == HudMode::Automatic)
+            lastAutoSubmittedHash = screenHash;
+
+        // From this point onward the HUD only renders the result.
+        // It never captures the screen itself.
+        tsl::changeTo<GeminiHudGui>();
     }
-    
-    bool handleInput(u64 keysDown, u64, const HidTouchState&, HidAnalogStickState, HidAnalogStickState) override {
+
+    bool handleInput(
+        u64,
+        u64,
+        const HidTouchState&,
+        HidAnalogStickState,
+        HidAnalogStickState
+    ) override {
         return false;
     }
 };
@@ -1540,22 +1585,19 @@ public:
         ++m_frame;
         reapFinishedAiThread();
 
-        // FINAL DIAGNOSTIC: disable all screenshot capture.
-        // This isolates the crash to the capture path if the HUD remains stable.
-        return;
-
         if (!m_started) {
             m_started = true;
             m_frame = 0;
-            m_lastPollFrame = 0;
-            m_stableFrames = 0;
-            m_observedHash = 0;
-            m_lastSubmittedHash = 0;
             m_manualSubmitted = false;
             m_wasBusy = false;
-            invalidateCache();
+            m_cachedGeneration = 0;
+            m_cacheValid = false;
+            m_cache.clear();
 
             clearVisibleResult();
+
+            // Automatic mode waits before its next polling cycle.
+            m_lastPollFrame = 30;
             return;
         }
 
@@ -1563,102 +1605,20 @@ public:
             g_aiThreadRunning.load(std::memory_order_acquire) ||
             g_translating.load(std::memory_order_acquire);
 
-        const bool justFinished = m_wasBusy && !busy;
-        m_wasBusy = busy;
-
-        // Manual mode: exactly one request, no continuous polling.
-        if (g_hudMode == HudMode::Manual) {
-            if (m_manualSubmitted || busy)
-                return;
-
-            if (m_frame < 18)
-                return;
-
-            auto shot = ScreenshotCapture::capture(65);
-            if (shot.jpegData.empty())
-                return;
-
-            const std::uint64_t hash = fingerprintScreenshot(shot.jpegData);
-            if (hash == 0)
-                return;
-
-            m_manualSubmitted = submitCapture(
-                std::move(shot.jpegData),
-                hash
-            );
-            return;
-        }
-
-        // Automatic mode: never stack requests.
         if (busy)
             return;
 
-        // Immediately after Gemini returns, verify the screen is still the
-        // screen we translated. If it changed, discard that result and start
-        // observing the new screen instead of showing stale dialogue.
-        if (justFinished) {
-            auto shot = ScreenshotCapture::capture(65);
-            if (!shot.jpegData.empty()) {
-                const std::uint64_t currentHash =
-                    fingerprintScreenshot(shot.jpegData);
-
-                if (currentHash != m_lastSubmittedHash) {
-                    clearVisibleResult();
-                    m_observedHash = currentHash;
-                    m_stableFrames = 1;
-                    m_lastPollFrame = m_frame;
-                    return;
-                }
-
-                // The translated screen is still current. Do not immediately
-                // capture a second JPEG in this same update cycle.
-                m_lastPollFrame = m_frame;
-                return;
-            }
-
-            // If verification capture failed, wait for the next poll instead
-            // of immediately retrying every frame.
-            m_lastPollFrame = m_frame;
+        // Manual mode: stay here and only render the current result.
+        if (g_hudMode == HudMode::Manual)
             return;
+
+        // Automatic mode:
+        // capture is deliberately performed by ScreenshotWaitGui,
+        // never while GeminiHudGui is active.
+        if (m_frame >= m_lastPollFrame) {
+            m_lastPollFrame = m_frame + 30; // ~500 ms at 60 FPS
+            tsl::changeTo<ScreenshotWaitGui>();
         }
-
-        if (m_frame < 18)
-            return;
-
-        // ~166ms polling at 60fps. Two equal observations produce roughly
-        // 330ms debounce before a request is sent.
-        constexpr std::uint32_t POLL_INTERVAL_FRAMES = 30;
-
-        if (m_lastPollFrame != 0 &&
-            (m_frame - m_lastPollFrame) < POLL_INTERVAL_FRAMES) {
-            return;
-        }
-
-        m_lastPollFrame = m_frame;
-
-        auto shot = ScreenshotCapture::capture(65);
-        if (shot.jpegData.empty())
-            return;
-
-        const std::uint64_t currentHash =
-            fingerprintScreenshot(shot.jpegData);
-        if (currentHash == 0)
-            return;
-
-        if (currentHash != m_observedHash) {
-            m_observedHash = currentHash;
-            m_stableFrames = 1;
-        } else {
-            ++m_stableFrames;
-        }
-
-        if (m_stableFrames < 2)
-            return;
-
-        if (currentHash == m_lastSubmittedHash)
-            return;
-
-        submitCapture(std::move(shot.jpegData), currentHash);
     }
 
     bool handleInput(
@@ -1682,7 +1642,7 @@ public:
 
 static void openGeminiHud(HudMode mode) {
     g_hudMode = mode;
-    tsl::changeTo<GeminiHudGui>();
+    tsl::changeTo<ScreenshotWaitGui>();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
