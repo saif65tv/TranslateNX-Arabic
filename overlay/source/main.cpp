@@ -1218,16 +1218,60 @@ static void geminiTranslateThread(void* arg) {
     g_aiThreadRunning.store(false, std::memory_order_release);
 }
 
+
+class FullscreenHudRoot : public tsl::elm::Element {
+    tsl::elm::CustomDrawer* m_drawer;
+
+public:
+    explicit FullscreenHudRoot(tsl::elm::CustomDrawer* drawer)
+        : m_drawer(drawer) {
+        m_isItem = false;
+        m_isTable = false;
+    }
+
+    ~FullscreenHudRoot() override {
+        delete m_drawer;
+    }
+
+    void draw(tsl::gfx::Renderer* renderer) override {
+        if (m_drawer)
+            m_drawer->frame(renderer);
+    }
+
+    void layout(
+        u16 parentX,
+        u16 parentY,
+        u16 parentWidth,
+        u16 parentHeight
+    ) override {
+        setBoundaries(parentX, parentY, parentWidth, parentHeight);
+
+        if (m_drawer) {
+            m_drawer->setBoundaries(
+                parentX,
+                parentY,
+                parentWidth,
+                parentHeight
+            );
+        }
+    }
+
+    bool handleInput(
+        u64,
+        u64,
+        const HidTouchState&,
+        HidAnalogStickState,
+        HidAnalogStickState
+    ) override {
+        return false;
+    }
+};
+
 class GeminiHudGui : public tsl::Gui {
     bool m_started = false;
 
 public:
     tsl::elm::Element* createUI() override {
-        auto* frame = new tsl::elm::OverlayFrame(
-            "TranslateNX",
-            "Gemini HUD"
-        );
-
         auto* drawer = new tsl::elm::CustomDrawer(
             [](tsl::gfx::Renderer* renderer, s32, s32, s32, s32) {
                 renderer->drawString(
@@ -1241,15 +1285,7 @@ public:
             }
         );
 
-        drawer->setBoundaries(
-            0,
-            0,
-            1280,
-            720
-        );
-
-        frame->setContent(drawer);
-        return frame;
+        return new FullscreenHudRoot(drawer);
     }
 
     void update() override {
