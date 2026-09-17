@@ -30,7 +30,7 @@ static std::string resolveDomainToIp(const std::string& domain) {
     std::string responseBody;
     
     CURLcode res = CURLE_FAILED_INIT;
-    for (int retry = 0; retry < 3; retry++) {
+    for (int retry = 0; retry < 1; retry++) {
         responseBody.clear();
         CURL* curl = curl_easy_init();
         if (!curl) continue;
@@ -38,7 +38,7 @@ static std::string resolveDomainToIp(const std::string& domain) {
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
@@ -93,32 +93,17 @@ static void configureCurl(CURL* curl, const std::string& url,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);          // 15 sn timeout
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);          // 5 second total request timeout
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
     // SSL — Sertifika doğrulamasını kapatıyoruz
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     
-    // DNS bypass via Google DNS JSON API
-    // Sadece HTTPS/HTTP adreslerinden domain'i ayıkla
-    std::string domain = "";
-    size_t start = url.find("://");
-    if (start != std::string::npos) {
-        start += 3;
-        size_t end = url.find('/', start);
-        if (end == std::string::npos) end = url.length();
-        domain = url.substr(start, end - start);
-    }
-    
-    if (!domain.empty() && domain != "8.8.8.8") {
-        std::string ip = resolveDomainToIp(domain);
-        if (!ip.empty()) {
-            std::string resolveStr = domain + ":443:" + ip;
-            resolveList = curl_slist_append(resolveList, resolveStr.c_str());
-            curl_easy_setopt(curl, CURLOPT_RESOLVE, resolveList);
-        }
-    }
+    // Use the Switch/libcurl system DNS resolver directly.
+    // Avoid an extra HTTPS request to Google's DNS JSON API before every domain.
 
     for (const auto& h : headers) {
         headerList = curl_slist_append(headerList, h.c_str());
@@ -154,14 +139,7 @@ HttpResponse post(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
 
-    CURLcode res;
-    int retries = 2;
-    while (retries >= 0) {
-        res = curl_easy_perform(curl);
-        if (res == CURLE_OK) break;
-        if (retries > 0) svcSleepThread(500000000ull);
-        retries--;
-    }
+    CURLcode res = curl_easy_perform(curl);
 
     if (res == CURLE_OK) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.statusCode);

@@ -335,12 +335,12 @@ TranslateResult runGeminiAI(
     std::string image64 = encodeBase64(jpegData);
 
     std::string prompt =
-        "Please extract all visible text from this image and translate it to " +
+        "Read all visible in-game text in this image and translate it to " +
         targetLang +
-        ". Preserve the meaning and natural context of the original text. "
-        "Return ONLY a raw JSON object with no markdown formatting, "
-        "containing exactly two keys: \"original\" (the extracted text) "
-        "and \"translated\" (the translation).";
+        ". Preserve every piece of visible text, its meaning, context, "
+        "and natural wording. Keep the original reading order and line breaks "
+        "when useful. Return ONLY JSON with exactly one key: "
+        "\"translated\" containing the complete translation. No explanation.";
 
     cJSON* root = cJSON_CreateObject();
     cJSON* contents = cJSON_CreateArray();
@@ -355,7 +355,22 @@ TranslateResult runGeminiAI(
     cJSON* inlineData = cJSON_CreateObject();
     cJSON_AddStringToObject(inlineData, "mime_type", "image/jpeg");
     cJSON_AddStringToObject(inlineData, "data", image64.c_str());
+
     cJSON_AddItemToObject(imagePart, "inline_data", inlineData);
+
+    // Medium vision resolution: balance text accuracy and latency.
+    cJSON* mediaResolution = cJSON_CreateObject();
+    cJSON_AddStringToObject(
+        mediaResolution,
+        "level",
+        "MEDIA_RESOLUTION_MEDIUM"
+    );
+    cJSON_AddItemToObject(
+        imagePart,
+        "media_resolution",
+        mediaResolution
+    );
+
     cJSON_AddItemToArray(parts, imagePart);
 
     cJSON_AddItemToObject(content, "parts", parts);
@@ -392,6 +407,18 @@ TranslateResult runGeminiAI(
         thinkingConfig
     );
 
+    cJSON_AddStringToObject(
+        generationConfig,
+        "responseMimeType",
+        "application/json"
+    );
+
+    cJSON_AddNumberToObject(
+        generationConfig,
+        "maxOutputTokens",
+        1024
+    );
+
     cJSON_AddItemToObject(
         root,
         "generationConfig",
@@ -413,20 +440,11 @@ TranslateResult runGeminiAI(
         selectedModel +
         ":generateContent?key=" + apiKey;
 
-    HttpResponse resp;
-
-    for (int retry = 0; retry < 3; ++retry) {
-        resp = HttpClient::post(
-            url,
-            body,
-            {"Content-Type: application/json"}
-        );
-
-        if (resp.ok())
-            break;
-
-        svcSleepThread(1000000000ull);
-    }
+    HttpResponse resp = HttpClient::post(
+        url,
+        body,
+        {"Content-Type: application/json"}
+    );
 
     if (!resp.ok()) {
         if (resp.statusCode == 0) {

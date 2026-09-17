@@ -19,12 +19,12 @@ Screenshot capture(int /*quality*/) {
 
     u64 jpegSize = 0;
     // 5 saniye timeout. Önce sadece oyunu çekmeyi deneriz (ApplicationForDebug)
-    rc = capsscCaptureJpegScreenShot(&jpegSize, result.jpegData.data(), bufSize, ViLayerStack_ApplicationForDebug, 5000000000ULL);
+    rc = capsscCaptureJpegScreenShot(&jpegSize, result.jpegData.data(), bufSize, ViLayerStack_ApplicationForDebug, 2000000000ULL);
     
     // Eğer sadece oyunu çekmek başarısız olursa veya boş dönerse, Default (Tüm katmanlar) ile tekrar deneriz
     if (R_FAILED(rc) || jpegSize == 0) {
         jpegSize = 0;
-        rc = capsscCaptureJpegScreenShot(&jpegSize, result.jpegData.data(), bufSize, ViLayerStack_Default, 5000000000ULL);
+        rc = capsscCaptureJpegScreenShot(&jpegSize, result.jpegData.data(), bufSize, ViLayerStack_Default, 2000000000ULL);
     }
     
     if (R_FAILED(rc) || jpegSize == 0) {
